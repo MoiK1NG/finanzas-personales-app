@@ -1,4 +1,5 @@
 export type Currency = 'COP'
+export type AccountType = 'checking' | 'savings' | 'digital' | 'cash'
 
 export type TransactionType = 'income' | 'expense' | 'transfer'
 export type RecurrenceFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly'
@@ -77,6 +78,19 @@ export interface Goal {
   priority: number
   status: GoalStatus
   image_url: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BankAccount {
+  id: string
+  user_id: string
+  name: string
+  account_type: AccountType
+  balance: number
+  color: string
+  is_active: boolean
+  sort_order: number
   created_at: string
   updated_at: string
 }

@@ -10,17 +10,19 @@ import {
   Settings,
   TrendingUp,
   LogOut,
+  Landmark,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
 const navItems = [
-  { href: '/',               label: 'Dashboard',      icon: LayoutDashboard },
-  { href: '/bolsillos',      label: 'Bolsillos',       icon: Wallet },
-  { href: '/transacciones',  label: 'Movimientos',     icon: ArrowLeftRight },
-  { href: '/metas',          label: 'Metas',           icon: Target },
-  { href: '/configuracion',  label: 'Configuración',   icon: Settings },
+  { href: '/',              label: 'Dashboard',    icon: LayoutDashboard },
+  { href: '/cuentas',       label: 'Cuentas',      icon: Landmark },
+  { href: '/bolsillos',     label: 'Bolsillos',    icon: Wallet },
+  { href: '/transacciones', label: 'Movimientos',  icon: ArrowLeftRight },
+  { href: '/metas',         label: 'Metas',        icon: Target },
+  { href: '/configuracion', label: 'Configuración',icon: Settings },
 ]
 
 export default function Sidebar() {

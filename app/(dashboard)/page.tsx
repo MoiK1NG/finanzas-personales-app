@@ -9,6 +9,8 @@ import EnvelopeProgressCard from '@/components/dashboard/EnvelopeProgressCard'
 import RecentTransactions from '@/components/dashboard/RecentTransactions'
 import BalanceDiscrepancy from '@/components/dashboard/BalanceDiscrepancy'
 import PeriodSetupModal from '@/components/dashboard/PeriodSetupModal'
+import AccountsWidget from '@/components/dashboard/AccountsWidget'
+import BudgetTable from '@/components/dashboard/BudgetTable'
 import QuickAddForm from '@/components/transactions/QuickAddForm'
 import type {
   BudgetPeriod,
@@ -17,8 +19,11 @@ import type {
   EnvelopeSummary,
   PeriodSummary,
   Profile,
+  BankAccount,
 } from '@/types/database'
-import { Settings2 } from 'lucide-react'
+import { Settings2, LayoutGrid, Table2 } from 'lucide-react'
+
+type View = 'cards' | 'table'
 
 export default function DashboardPage() {
   const [periodDate, setPeriodDate] = useState(getPeriodDate())
@@ -27,9 +32,11 @@ export default function DashboardPage() {
   const [envelopes, setEnvelopes] = useState<Envelope[]>([])
   const [envelopeSummary, setEnvelopeSummary] = useState<EnvelopeSummary[]>([])
   const [periodSummary, setPeriodSummary] = useState<PeriodSummary | null>(null)
+  const [accounts, setAccounts] = useState<BankAccount[]>([])
   const [recentTx, setRecentTx] = useState<(Transaction & { envelope?: Envelope | null })[]>([])
   const [showSetup, setShowSetup] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [budgetView, setBudgetView] = useState<View>('cards')
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -37,13 +44,13 @@ export default function DashboardPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    // Profile
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
+    // Profile + accounts in parallel
+    const [{ data: prof }, { data: accs }] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', user.id).single(),
+      supabase.from('bank_accounts').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
+    ])
     setProfile(prof)
+    setAccounts(accs ?? [])
 
     // Budget period
     const { data: per } = await supabase
@@ -60,50 +67,32 @@ export default function DashboardPage() {
       return
     }
 
-    // Envelopes
-    const { data: envs } = await supabase
-      .from('envelopes')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .order('sort_order')
+    // Envelopes, summaries, recent tx in parallel
+    const [
+      { data: envs },
+      { data: envSum },
+      { data: perSum },
+      { data: txs },
+    ] = await Promise.all([
+      supabase.from('envelopes').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
+      supabase.from('v_envelope_summary').select('*').eq('budget_period_id', per.id).eq('user_id', user.id),
+      supabase.from('v_period_summary').select('*').eq('budget_period_id', per.id).eq('user_id', user.id).single(),
+      supabase.from('transactions').select('*, envelope:envelopes(*)').eq('budget_period_id', per.id)
+        .order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(8),
+    ])
+
     setEnvelopes(envs ?? [])
-
-    // Envelope summary view
-    const { data: envSum } = await supabase
-      .from('v_envelope_summary')
-      .select('*')
-      .eq('budget_period_id', per.id)
-      .eq('user_id', user.id)
     setEnvelopeSummary(envSum ?? [])
-
-    // Period summary view
-    const { data: perSum } = await supabase
-      .from('v_period_summary')
-      .select('*')
-      .eq('budget_period_id', per.id)
-      .eq('user_id', user.id)
-      .single()
     setPeriodSummary(perSum)
-
-    // Recent transactions (last 8)
-    const { data: txs } = await supabase
-      .from('transactions')
-      .select('*, envelope:envelopes(*)')
-      .eq('budget_period_id', per.id)
-      .order('transaction_date', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(8)
     setRecentTx(txs ?? [])
-
     setLoading(false)
   }, [periodDate])
 
-  useEffect(() => {
-    loadData()
-  }, [loadData])
+  useEffect(() => { loadData() }, [loadData])
 
   const ps = periodSummary
+  const totalBankBalance = accounts.reduce((sum, a) => sum + a.balance, 0)
+  const totalBudgeted = ps?.total_budgeted ?? 0
 
   return (
     <>
@@ -114,6 +103,7 @@ export default function DashboardPage() {
       />
 
       <main className="p-6 space-y-6 max-w-7xl">
+
         {/* Period setup banner */}
         {!period && !loading && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 flex items-center justify-between">
@@ -122,7 +112,7 @@ export default function DashboardPage() {
                 Configura el período de {formatPeriodLabel(periodDate)}
               </p>
               <p className="text-xs text-indigo-600 mt-0.5">
-                Define tu ingreso proyectado y saldo bancario para comenzar.
+                Define tu ingreso proyectado para comenzar.
               </p>
             </div>
             <button
@@ -139,15 +129,12 @@ export default function DashboardPage() {
             {/* KPIs row */}
             <section>
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-                  Resumen del mes
-                </h2>
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Resumen del mes</h2>
                 <button
                   onClick={() => setShowSetup(true)}
                   className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
                 >
-                  <Settings2 className="h-3.5 w-3.5" />
-                  Editar período
+                  <Settings2 className="h-3.5 w-3.5" /> Editar período
                 </button>
               </div>
 
@@ -160,12 +147,8 @@ export default function DashboardPage() {
                 />
                 <KPICard
                   title="Total presupuestado"
-                  amount={ps?.total_budgeted ?? 0}
-                  subtitle={
-                    ps
-                      ? `${formatCOP(ps.unassigned_amount)} sin asignar`
-                      : undefined
-                  }
+                  amount={totalBudgeted}
+                  subtitle={ps ? `${formatCOP(ps.unassigned_amount)} sin asignar` : undefined}
                   trend={ps && ps.unassigned_amount === 0 ? 'up' : 'neutral'}
                 />
                 <KPICard
@@ -176,19 +159,20 @@ export default function DashboardPage() {
                   amountClassName="text-red-600"
                 />
                 <KPICard
-                  title="Saldo banco"
-                  amount={period.real_bank_balance}
-                  subtitle="Actualizado manual"
-                  trend={period.real_bank_balance >= 0 ? 'up' : 'down'}
+                  title="Saldo en cuentas"
+                  amount={totalBankBalance}
+                  subtitle={`${accounts.length} cuenta${accounts.length !== 1 ? 's' : ''}`}
+                  trend={totalBankBalance >= 0 ? 'up' : 'down'}
                 />
               </div>
             </section>
 
-            {/* Discrepancy alert */}
+            {/* Discrepancy */}
             {ps && (
               <BalanceDiscrepancy
-                theoretical={ps.theoretical_balance}
-                realBankBalance={period.real_bank_balance}
+                projectedIncome={ps.projected_income}
+                totalBudgeted={totalBudgeted}
+                realBankBalance={totalBankBalance}
                 realIncomeReceived={ps.real_income_received}
                 realExpensesPaid={ps.real_expenses_paid}
               />
@@ -196,16 +180,32 @@ export default function DashboardPage() {
 
             {/* Main grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Bolsillos */}
-              <section className="lg:col-span-2">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-                    Bolsillos
-                  </h2>
-                  <a href="/bolsillos" className="text-xs text-indigo-600 hover:underline">
-                    Administrar
-                  </a>
+              {/* Left: Budget (cards or table) */}
+              <section className="lg:col-span-2 space-y-4">
+                {/* View toggle */}
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Bolsillos</h2>
+                  <div className="flex items-center gap-2">
+                    <a href="/bolsillos" className="text-xs text-indigo-600 hover:underline mr-2">Administrar</a>
+                    <div className="flex bg-gray-100 rounded-lg p-0.5">
+                      <button
+                        onClick={() => setBudgetView('cards')}
+                        className={`p-1.5 rounded-md transition-colors ${budgetView === 'cards' ? 'bg-white shadow-sm text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+                        title="Vista tarjetas"
+                      >
+                        <LayoutGrid className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setBudgetView('table')}
+                        className={`p-1.5 rounded-md transition-colors ${budgetView === 'table' ? 'bg-white shadow-sm text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+                        title="Vista tabla"
+                      >
+                        <Table2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
+
                 {envelopeSummary.length === 0 ? (
                   <div className="bg-white border border-dashed border-gray-300 rounded-xl p-8 text-center">
                     <p className="text-sm text-gray-400">No hay bolsillos configurados</p>
@@ -213,17 +213,27 @@ export default function DashboardPage() {
                       Crear bolsillos →
                     </a>
                   </div>
-                ) : (
+                ) : budgetView === 'cards' ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {envelopeSummary.map(env => (
                       <EnvelopeProgressCard key={env.envelope_id} envelope={env} />
                     ))}
                   </div>
+                ) : (
+                  <BudgetTable
+                    summaries={envelopeSummary}
+                    projectedIncome={ps?.projected_income ?? period.projected_income}
+                    budgetPeriodId={period.id}
+                    onRefresh={loadData}
+                  />
                 )}
               </section>
 
               {/* Right column */}
               <section className="space-y-4">
+                {/* Accounts widget */}
+                <AccountsWidget accounts={accounts} totalBalance={totalBankBalance} />
+
                 {/* Quick add */}
                 <div>
                   <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
