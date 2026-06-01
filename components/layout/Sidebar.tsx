@@ -19,7 +19,7 @@ import { useRouter } from 'next/navigation'
 const navItems = [
   { href: '/',              label: 'Dashboard',    icon: LayoutDashboard },
   { href: '/cuentas',       label: 'Cuentas',      icon: Landmark },
-  { href: '/bolsillos',     label: 'Bolsillos',    icon: Wallet },
+  { href: '/bolsillos',     label: 'Presupuesto',  icon: Wallet },
   { href: '/transacciones', label: 'Movimientos',  icon: ArrowLeftRight },
   { href: '/metas',         label: 'Metas',        icon: Target },
   { href: '/configuracion', label: 'Configuración',icon: Settings },
