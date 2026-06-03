@@ -102,7 +102,7 @@ export default function DashboardPage() {
         userName={profile?.full_name}
       />
 
-      <main className="p-6 space-y-6 max-w-7xl">
+      <main className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl">
 
         {/* Period setup banner */}
         {!period && !loading && (
@@ -138,7 +138,7 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <KPICard
                   title="Ingreso proyectado"
                   amount={ps?.projected_income ?? period.projected_income}

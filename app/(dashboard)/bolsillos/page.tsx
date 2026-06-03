@@ -176,7 +176,7 @@ export default function BolsillosPage() {
     <>
       <Header periodDate={periodDate} onPeriodChange={setPeriodDate} />
 
-      <main className="p-6 max-w-4xl space-y-6">
+      <main className="p-4 sm:p-6 max-w-4xl space-y-4 sm:space-y-6">
 
         {/* ── Title ─────────────────────────────────────────────────────────── */}
         <div>
@@ -211,7 +211,7 @@ export default function BolsillosPage() {
                     onKeyDown={e => { if (e.key === 'Enter') saveIncome(); if (e.key === 'Escape') setEditingIncome(false) }}
                     className="bg-white/20 border border-white/40 rounded-lg px-3 py-1 text-2xl font-bold w-52 focus:outline-none focus:bg-white/30"
                     autoFocus
-                    step="1000"
+                    step="1"
                   />
                   <button onClick={saveIncome} className="p-1.5 bg-white/20 hover:bg-white/30 rounded-lg"><Check className="h-4 w-4" /></button>
                   <button onClick={() => setEditingIncome(false)} className="p-1.5 bg-white/20 hover:bg-white/30 rounded-lg"><X className="h-4 w-4" /></button>
@@ -267,8 +267,8 @@ export default function BolsillosPage() {
 
             {/* ── Budget table ──────────────────────────────────────────────── */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              {/* Table header */}
-              <div className="grid grid-cols-[2fr_1.2fr_1fr_1fr_1.4fr_auto] gap-0 border-b border-gray-100 bg-gray-50 px-4 py-2.5">
+              {/* Table header — hidden on mobile, shown on sm+ */}
+              <div className="hidden sm:grid grid-cols-[2fr_1.2fr_1fr_1fr_1.4fr_auto] gap-0 border-b border-gray-100 bg-gray-50 px-4 py-2.5">
                 {['Categoría','Presupuestado','% Ingreso','Gastado','Cumplimiento',''].map((h, i) => (
                   <div key={i} className={cn('text-xs font-semibold text-gray-500 uppercase tracking-wide', i > 0 && 'text-right')}>
                     {h}
@@ -292,86 +292,105 @@ export default function BolsillosPage() {
                   const isEditing = editingRow === row.envelopeId
 
                   return (
-                    <div
-                      key={row.envelopeId}
-                      className="grid grid-cols-[2fr_1.2fr_1fr_1fr_1.4fr_auto] gap-0 px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors group items-center"
-                    >
-                      {/* Name */}
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
-                        <span className="text-sm font-medium text-gray-800 truncate">{row.name}</span>
-                        {row.isSavings && <span className="text-xs text-indigo-500 font-medium flex-shrink-0">Ahorro</span>}
+                    <div key={row.envelopeId} className="border-b border-gray-50 last:border-0">
+                      {/* ── Mobile card view ── */}
+                      <div className="sm:hidden px-4 py-3 hover:bg-gray-50 group">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
+                            <span className="text-sm font-semibold text-gray-800 truncate">{row.name}</span>
+                            {row.isSavings && <span className="text-xs text-indigo-500 font-medium">Ahorro</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={cn('text-xs font-bold', statusColor(row.pct, isOver))}>
+                              {formatPercent(row.pct)}
+                            </span>
+                            <button onClick={() => archiveEnvelope(row.envelopeId, row.name)}
+                              className="p-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-2">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Presupuestado</span>
+                            <button onClick={() => { setEditingRow(row.envelopeId); setEditValue(row.projected.toString()) }}
+                              className="font-semibold text-gray-700 hover:text-indigo-600">
+                              {isEditing ? (
+                                <input ref={editRef} type="number" inputMode="numeric" value={editValue}
+                                  onChange={e => setEditValue(e.target.value)}
+                                  onBlur={() => saveProjected(row.envelopeBudgetId)}
+                                  onKeyDown={e => { if (e.key === 'Enter') saveProjected(row.envelopeBudgetId) }}
+                                  className="w-24 text-right border border-indigo-400 rounded px-1 py-0.5 focus:outline-none"
+                                  step="1" min="0" />
+                              ) : formatCOP(row.projected)}
+                            </button>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Gastado</span>
+                            <span className={cn('font-semibold', isOver ? 'text-red-600' : 'text-gray-700')}>
+                              {formatCOP(row.executed)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between col-span-2">
+                            <span className="text-gray-400">Disponible</span>
+                            <span className={cn('font-semibold', row.available < 0 ? 'text-red-600' : 'text-green-600')}>
+                              {formatCOP(row.available)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div className={cn('h-full rounded-full transition-all', barColor(row.pct, isOver))}
+                            style={{ width: `${Math.min(row.pct, 100)}%` }} />
+                        </div>
                       </div>
 
-                      {/* Projected — inline editable */}
-                      <div className="text-right">
-                        {isEditing ? (
-                          <div className="flex items-center justify-end gap-1">
-                            <input
-                              ref={editRef}
-                              type="number"
-                              value={editValue}
+                      {/* ── Desktop table row ── */}
+                      <div className="hidden sm:grid grid-cols-[2fr_1.2fr_1fr_1fr_1.4fr_auto] gap-0 px-4 py-3 hover:bg-gray-50 transition-colors group items-center">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
+                          <span className="text-sm font-medium text-gray-800 truncate">{row.name}</span>
+                          {row.isSavings && <span className="text-xs text-indigo-500 font-medium flex-shrink-0">Ahorro</span>}
+                        </div>
+                        <div className="text-right">
+                          {isEditing ? (
+                            <input ref={editRef} type="number" value={editValue}
                               onChange={e => setEditValue(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter')  saveProjected(row.envelopeBudgetId)
-                                if (e.key === 'Escape') setEditingRow(null)
-                              }}
+                              onKeyDown={e => { if (e.key === 'Enter') saveProjected(row.envelopeBudgetId); if (e.key === 'Escape') setEditingRow(null) }}
                               onBlur={() => saveProjected(row.envelopeBudgetId)}
                               className="w-28 text-right px-2 py-1 border border-indigo-400 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                              step="1000"
-                              min="0"
-                            />
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => { setEditingRow(row.envelopeId); setEditValue(row.projected.toString()) }}
-                            className="text-sm font-semibold text-gray-700 hover:text-indigo-600 hover:underline transition-colors"
-                            title="Clic para editar"
-                          >
-                            {formatCOP(row.projected)}
-                          </button>
-                        )}
-                      </div>
-
-                      {/* % of income */}
-                      <div className="text-right text-sm text-gray-500">
-                        {income > 0 && row.projected > 0
-                          ? formatPercent((row.projected / income) * 100)
-                          : '—'}
-                      </div>
-
-                      {/* Executed */}
-                      <div className={cn('text-right text-sm font-semibold', isOver ? 'text-red-600' : 'text-gray-700')}>
-                        {formatCOP(row.executed)}
-                      </div>
-
-                      {/* Compliance bar + % */}
-                      <div className="flex items-center gap-2 justify-end">
-                        <div className="w-20 h-2 bg-gray-100 rounded-full overflow-hidden flex-shrink-0">
-                          <div
-                            className={cn('h-full rounded-full transition-all duration-500', barColor(row.pct, isOver))}
-                            style={{ width: `${Math.min(row.pct, 100)}%` }}
-                          />
+                              step="1" min="0" />
+                          ) : (
+                            <button onClick={() => { setEditingRow(row.envelopeId); setEditValue(row.projected.toString()) }}
+                              className="text-sm font-semibold text-gray-700 hover:text-indigo-600 hover:underline">
+                              {formatCOP(row.projected)}
+                            </button>
+                          )}
                         </div>
-                        <span className={cn('text-xs font-bold w-10 text-right flex-shrink-0', statusColor(row.pct, isOver))}>
-                          {formatPercent(row.pct)}
-                        </span>
-                        {isOver
-                          ? <TrendingUp className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
-                          : row.pct >= 80
-                            ? <Minus className="h-3.5 w-3.5 text-yellow-500 flex-shrink-0" />
-                            : <TrendingDown className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
-                        }
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => archiveEnvelope(row.envelopeId, row.name)}
-                          className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="text-right text-sm text-gray-500">
+                          {income > 0 && row.projected > 0 ? formatPercent((row.projected / income) * 100) : '—'}
+                        </div>
+                        <div className={cn('text-right text-sm font-semibold', isOver ? 'text-red-600' : 'text-gray-700')}>
+                          {formatCOP(row.executed)}
+                        </div>
+                        <div className="flex items-center gap-2 justify-end">
+                          <div className="w-20 h-2 bg-gray-100 rounded-full overflow-hidden flex-shrink-0">
+                            <div className={cn('h-full rounded-full transition-all duration-500', barColor(row.pct, isOver))}
+                              style={{ width: `${Math.min(row.pct, 100)}%` }} />
+                          </div>
+                          <span className={cn('text-xs font-bold w-10 text-right flex-shrink-0', statusColor(row.pct, isOver))}>
+                            {formatPercent(row.pct)}
+                          </span>
+                          {isOver ? <TrendingUp className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
+                            : row.pct >= 80 ? <Minus className="h-3.5 w-3.5 text-yellow-500 flex-shrink-0" />
+                            : <TrendingDown className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />}
+                        </div>
+                        <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => archiveEnvelope(row.envelopeId, row.name)}
+                            className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )
@@ -417,7 +436,7 @@ export default function BolsillosPage() {
                         onChange={e => setNewAmount(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') saveNewCategory() }}
                         className="w-28 text-right pl-5 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        step="1000"
+                        step="1"
                         min="0"
                       />
                     </div>
@@ -466,7 +485,7 @@ export default function BolsillosPage() {
 
               {/* ── Totals footer ─────────────────────────────────────────── */}
               {rows.length > 0 && (
-                <div className="grid grid-cols-[2fr_1.2fr_1fr_1fr_1.4fr_auto] gap-0 px-4 py-3 bg-gray-50 font-semibold text-sm">
+                <div className="hidden sm:grid grid-cols-[2fr_1.2fr_1fr_1fr_1.4fr_auto] gap-0 px-4 py-3 bg-gray-50 font-semibold text-sm border-t border-gray-200">
                   <div className="text-gray-600">Total</div>
                   <div className="text-right text-gray-800">{formatCOP(totalBudgeted)}</div>
                   <div className="text-right text-gray-500">

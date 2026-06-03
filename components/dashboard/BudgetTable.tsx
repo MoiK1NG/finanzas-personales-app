@@ -108,7 +108,7 @@ export default function BudgetTable({
                           onChange={e => setEditValue(e.target.value)}
                           className="w-32 text-right pl-5 pr-2 py-1 border border-indigo-400 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           autoFocus
-                          step="1000"
+                          step="1"
                           min="0"
                           onKeyDown={e => {
                             if (e.key === 'Enter') saveEdit(s.envelope_budget_id)

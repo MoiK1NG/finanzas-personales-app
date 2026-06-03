@@ -68,7 +68,7 @@ export default function UpdateBalanceModal({ account, onSuccess, onClose }: Upda
                 type="number"
                 value={balance}
                 onChange={e => setBalance(e.target.value)}
-                step="100"
+                step="1"
                 className="w-full rounded-lg border border-gray-300 pl-7 pr-3 py-2.5 text-lg font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 autoFocus
               />

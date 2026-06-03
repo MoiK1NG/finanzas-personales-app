@@ -139,7 +139,7 @@ export default function AccountForm({ account, onSuccess, onClose }: AccountForm
             value={balance}
             onChange={e => setBalance(e.target.value)}
             min="0"
-            step="1000"
+            step="1"
           />
 
           <div>

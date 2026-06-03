@@ -9,7 +9,7 @@ import { Card } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import { cn } from '@/lib/utils'
 import type { Envelope, BudgetPeriod, Transaction } from '@/types/database'
-import { ArrowUpRight, ArrowDownLeft, Repeat, Trash2, ArrowLeftRight } from 'lucide-react'
+import { ArrowUpRight, ArrowDownLeft, Repeat, Trash2, ArrowLeftRight, Plus } from 'lucide-react'
 
 type TxWithEnvelope = Transaction & { envelope?: Envelope | null }
 
@@ -20,6 +20,7 @@ export default function TransaccionesPage() {
   const [transactions, setTransactions] = useState<TxWithEnvelope[]>([])
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all')
+  const [showQuickAdd, setShowQuickAdd] = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -69,50 +70,51 @@ export default function TransaccionesPage() {
     filterType === 'all' || tx.type === filterType
   )
 
-  const totalIncome = transactions.filter(t => t.type === 'income' && t.is_executed).reduce((a, t) => a + t.amount, 0)
+  const totalIncome  = transactions.filter(t => t.type === 'income'  && t.is_executed).reduce((a, t) => a + t.amount, 0)
   const totalExpense = transactions.filter(t => t.type === 'expense' && t.is_executed).reduce((a, t) => a + t.amount, 0)
 
   return (
     <>
       <Header periodDate={periodDate} onPeriodChange={setPeriodDate} />
 
-      <main className="p-6 max-w-5xl">
-        <div className="flex items-center justify-between mb-6">
+      <main className="p-4 sm:p-6 max-w-5xl space-y-4">
+        {/* Title row */}
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Movimientos</h1>
-            <p className="text-sm text-gray-500 mt-0.5 capitalize">{formatPeriodLabel(periodDate)}</p>
+            <h1 className="text-lg sm:text-xl font-bold text-gray-900">Movimientos</h1>
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5 capitalize">{formatPeriodLabel(periodDate)}</p>
           </div>
+          {/* Desktop: inline form button */}
           {period && (
-            <QuickAddForm envelopes={envelopes} budgetPeriod={period} onSuccess={loadData} />
+            <div className="hidden sm:block">
+              <QuickAddForm envelopes={envelopes} budgetPeriod={period} onSuccess={loadData} />
+            </div>
           )}
         </div>
 
         {/* Summary cards */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <Card padding="sm" className="text-center">
-            <p className="text-xs text-gray-500 mb-1">Ingresos</p>
-            <p className="text-lg font-bold text-green-600">{formatCOP(totalIncome)}</p>
-          </Card>
-          <Card padding="sm" className="text-center">
-            <p className="text-xs text-gray-500 mb-1">Gastos</p>
-            <p className="text-lg font-bold text-red-600">{formatCOP(totalExpense)}</p>
-          </Card>
-          <Card padding="sm" className="text-center">
-            <p className="text-xs text-gray-500 mb-1">Balance</p>
-            <p className={cn('text-lg font-bold', (totalIncome - totalExpense) >= 0 ? 'text-gray-900' : 'text-red-600')}>
-              {formatCOP(totalIncome - totalExpense)}
-            </p>
-          </Card>
+        <div className="grid grid-cols-3 gap-2 sm:gap-4">
+          {[
+            { label: 'Ingresos',   val: totalIncome,              cls: 'text-green-600' },
+            { label: 'Gastos',     val: totalExpense,             cls: 'text-red-600'   },
+            { label: 'Balance',    val: totalIncome - totalExpense,
+              cls: (totalIncome - totalExpense) >= 0 ? 'text-gray-900' : 'text-red-600' },
+          ].map(({ label, val, cls }) => (
+            <Card key={label} padding="sm" className="text-center">
+              <p className="text-[10px] sm:text-xs text-gray-500 mb-0.5">{label}</p>
+              <p className={cn('text-sm sm:text-lg font-bold', cls)}>{formatCOP(val)}</p>
+            </Card>
+          ))}
         </div>
 
         {/* Filter tabs */}
-        <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit">
+        <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
           {(['all', 'income', 'expense'] as const).map(f => (
             <button
               key={f}
               onClick={() => setFilterType(f)}
               className={cn(
-                'px-4 py-1.5 rounded-md text-sm font-medium transition-colors',
+                'px-3 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors',
                 filterType === f ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               )}
             >
@@ -124,12 +126,12 @@ export default function TransaccionesPage() {
         {/* Transactions list */}
         <Card padding="none">
           {loading ? (
-            <div className="flex justify-center py-12">
+            <div className="flex justify-center py-10">
               <div className="animate-spin h-6 w-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
             </div>
           ) : filtered.length === 0 ? (
-            <div className="text-center py-12">
-              <ArrowLeftRight className="h-10 w-10 text-gray-200 mx-auto mb-3" />
+            <div className="text-center py-10">
+              <ArrowLeftRight className="h-9 w-9 text-gray-200 mx-auto mb-2" />
               <p className="text-gray-400 text-sm">Sin movimientos en este período</p>
             </div>
           ) : (
@@ -137,11 +139,11 @@ export default function TransaccionesPage() {
               {filtered.map(tx => (
                 <div
                   key={tx.id}
-                  className="flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 transition-colors group"
+                  className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors group"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                     <div className={cn(
-                      'h-9 w-9 rounded-full flex items-center justify-center flex-shrink-0',
+                      'h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0',
                       tx.type === 'income' ? 'bg-green-100' : 'bg-red-100'
                     )}>
                       {tx.type === 'income'
@@ -150,22 +152,18 @@ export default function TransaccionesPage() {
                       }
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="text-sm font-medium text-gray-800 truncate">{tx.description}</p>
-                        {tx.is_recurring && (
-                          <Repeat className="h-3 w-3 text-gray-400 flex-shrink-0" />
-                        )}
-                        {!tx.is_executed && (
-                          <Badge variant="yellow">proyectado</Badge>
-                        )}
+                        {tx.is_recurring && <Repeat className="h-3 w-3 text-gray-400 flex-shrink-0" />}
+                        {!tx.is_executed && <Badge variant="yellow">proyectado</Badge>}
                       </div>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {tx.envelope?.name ?? 'Sin bolsillo'} · {formatDate(tx.transaction_date)}
+                      <p className="text-xs text-gray-400 mt-0.5 truncate">
+                        {tx.envelope?.name ?? 'Sin categoría'} · {formatDate(tx.transaction_date)}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                     <span className={cn(
                       'text-sm font-semibold',
                       tx.type === 'income' ? 'text-green-600' : 'text-red-600'
@@ -185,6 +183,27 @@ export default function TransaccionesPage() {
           )}
         </Card>
       </main>
+
+      {/* Mobile FAB */}
+      {period && (
+        <button
+          onClick={() => setShowQuickAdd(true)}
+          className="fixed bottom-20 right-4 sm:hidden h-14 w-14 bg-indigo-600 text-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-700 transition-colors z-40"
+        >
+          <Plus className="h-6 w-6" />
+        </button>
+      )}
+
+      {/* Mobile quick-add sheet */}
+      {showQuickAdd && period && (
+        <div className="sm:hidden">
+          <QuickAddForm
+            envelopes={envelopes}
+            budgetPeriod={period}
+            onSuccess={() => { setShowQuickAdd(false); loadData() }}
+          />
+        </div>
+      )}
     </>
   )
 }

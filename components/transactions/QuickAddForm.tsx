@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { getPeriodDate } from '@/lib/utils'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Select from '@/components/ui/Select'
@@ -38,24 +37,14 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
   const [open, setOpen] = useState(false)
 
   const envelopeOptions = envelopes.map(e => ({ value: e.id, label: e.name }))
-  const typeOptions = [
-    { value: 'expense', label: 'Gasto' },
-    { value: 'income', label: 'Ingreso' },
-  ]
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
-    const amount = parseFloat(form.amount.replace(/\./g, '').replace(',', '.'))
-    if (!amount || amount <= 0) {
-      setError('Ingresa un monto válido')
-      return
-    }
-    if (!form.description.trim()) {
-      setError('Agrega una descripción')
-      return
-    }
+    const amount = parseFloat(form.amount)
+    if (!amount || amount <= 0) { setError('Ingresa un monto válido'); return }
+    if (!form.description.trim()) { setError('Agrega una descripción'); return }
 
     setLoading(true)
     const supabase = createClient()
@@ -73,11 +62,7 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
     })
 
     setLoading(false)
-
-    if (err) {
-      setError('Error al guardar. Intenta de nuevo.')
-      return
-    }
+    if (err) { setError('Error al guardar. Intenta de nuevo.'); return }
 
     setForm(INITIAL)
     setOpen(false)
@@ -88,7 +73,7 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
     return (
       <button
         onClick={() => setOpen(true)}
-        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors w-full sm:w-auto justify-center"
       >
         <PlusCircle className="h-4 w-4" />
         Nuevo movimiento
@@ -97,15 +82,53 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-5">
+    <>
+      {/* Mobile: full-screen bottom sheet */}
+      <div className="fixed inset-0 z-50 sm:hidden">
+        <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
+        <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl p-5 shadow-2xl max-h-[92vh] overflow-y-auto">
+          <FormContent
+            form={form} setForm={setForm} loading={loading} error={error}
+            envelopeOptions={envelopeOptions}
+            onSubmit={handleSubmit} onClose={() => setOpen(false)}
+          />
+        </div>
+      </div>
+
+      {/* Desktop: inline card */}
+      <div className="hidden sm:block bg-white border border-gray-200 rounded-xl shadow-lg p-5">
+        <FormContent
+          form={form} setForm={setForm} loading={loading} error={error}
+          envelopeOptions={envelopeOptions}
+          onSubmit={handleSubmit} onClose={() => setOpen(false)}
+        />
+      </div>
+    </>
+  )
+}
+
+// ── Shared form body ──────────────────────────────────────────────────────────
+function FormContent({
+  form, setForm, loading, error, envelopeOptions, onSubmit, onClose,
+}: {
+  form: typeof INITIAL
+  setForm: React.Dispatch<React.SetStateAction<typeof INITIAL>>
+  loading: boolean
+  error: string | null
+  envelopeOptions: { value: string; label: string }[]
+  onSubmit: (e: React.FormEvent) => void
+  onClose: () => void
+}) {
+  return (
+    <>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-gray-800">Nuevo movimiento</h3>
-        <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600">
-          <X className="h-4 w-4" />
+        <h3 className="text-base font-semibold text-gray-800">Nuevo movimiento</h3>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
+          <X className="h-5 w-5" />
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form onSubmit={onSubmit} className="space-y-3">
         {/* Type toggle */}
         <div className="flex rounded-lg border border-gray-300 overflow-hidden">
           {(['expense', 'income'] as const).map(t => (
@@ -113,41 +136,51 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
               key={t}
               type="button"
               onClick={() => setForm(f => ({ ...f, type: t }))}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
                 form.type === t
-                  ? t === 'expense'
-                    ? 'bg-red-500 text-white'
-                    : 'bg-green-500 text-white'
+                  ? t === 'expense' ? 'bg-red-500 text-white' : 'bg-green-500 text-white'
                   : 'text-gray-500 hover:bg-gray-50'
               }`}
             >
-              {t === 'expense' ? 'Gasto' : 'Ingreso'}
+              {t === 'expense' ? '↓ Gasto' : '↑ Ingreso'}
             </button>
           ))}
         </div>
 
-        <Input
-          label="Monto (COP)"
-          prefix="$"
-          type="number"
-          placeholder="0"
-          value={form.amount}
-          onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
-          min="0"
-          step="100"
-        />
+        {/* Amount — large on mobile */}
+        <div>
+          <label className="text-sm font-medium text-gray-700 block mb-1">Monto (COP)</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              placeholder="0"
+              value={form.amount}
+              onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+              min="0"
+              step="1"
+              className="w-full pl-7 pr-3 py-3 text-xl font-bold border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              autoFocus
+            />
+          </div>
+        </div>
 
-        <Input
-          label="Descripción"
-          placeholder="Ej: Mercado, Netflix, Arriendo..."
-          value={form.description}
-          onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-        />
+        <div>
+          <label className="text-sm font-medium text-gray-700 block mb-1">Descripción</label>
+          <input
+            type="text"
+            placeholder="Mercado, Netflix, Arriendo..."
+            value={form.description}
+            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+            className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
 
         <Select
-          label="Bolsillo"
+          label="Categoría"
           options={envelopeOptions}
-          placeholder="Sin bolsillo"
+          placeholder="Sin categoría"
           value={form.envelope_id}
           onChange={e => setForm(f => ({ ...f, envelope_id: e.target.value }))}
         />
@@ -159,7 +192,6 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
           onChange={e => setForm(f => ({ ...f, transaction_date: e.target.value }))}
         />
 
-        {/* Executed toggle */}
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -167,20 +199,20 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
             onChange={e => setForm(f => ({ ...f, is_executed: e.target.checked }))}
             className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
           />
-          <span className="text-sm text-gray-700">Movimiento ejecutado (ya ocurrió)</span>
+          <span className="text-sm text-gray-700">Ya ejecutado (ya ocurrió)</span>
         </label>
 
         {error && <p className="text-xs text-red-600">{error}</p>}
 
         <div className="flex gap-2 pt-1">
-          <Button type="submit" loading={loading} className="flex-1">
+          <Button type="submit" loading={loading} className="flex-1" size="lg">
             Guardar
           </Button>
-          <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+          <Button type="button" variant="secondary" onClick={onClose} size="lg">
             Cancelar
           </Button>
         </div>
       </form>
-    </div>
+    </>
   )
 }

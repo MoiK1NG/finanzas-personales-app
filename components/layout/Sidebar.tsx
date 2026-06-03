@@ -36,7 +36,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-60 bg-gray-900 flex flex-col z-50">
+    <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-60 bg-gray-900 flex-col z-50">
       {/* Logo */}
       <div className="px-6 py-5 border-b border-gray-800">
         <div className="flex items-center gap-2">

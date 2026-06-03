@@ -84,7 +84,7 @@ export default function PeriodSetupModal({
             value={projectedIncome}
             onChange={e => setProjectedIncome(e.target.value)}
             min="0"
-            step="1000"
+            step="1"
           />
           <p className="text-xs text-gray-500 -mt-2">
             Lo que esperas recibir este mes (sueldo, freelance, etc.)
