@@ -247,7 +247,11 @@ export default function DashboardPage() {
                 </div>
 
                 {/* Recent transactions */}
-                <RecentTransactions transactions={recentTx} />
+                <RecentTransactions
+                  transactions={recentTx}
+                  envelopes={envelopes}
+                  onRefresh={loadData}
+                />
               </section>
             </div>
           </>

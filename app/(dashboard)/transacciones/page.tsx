@@ -5,22 +5,24 @@ import { createClient } from '@/lib/supabase/client'
 import { getPeriodDate, formatCOP, formatDate, formatPeriodLabel } from '@/lib/utils'
 import Header from '@/components/layout/Header'
 import QuickAddForm from '@/components/transactions/QuickAddForm'
+import EditTransactionModal from '@/components/transactions/EditTransactionModal'
 import { Card } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import { cn } from '@/lib/utils'
 import type { Envelope, BudgetPeriod, Transaction } from '@/types/database'
-import { ArrowUpRight, ArrowDownLeft, Repeat, Trash2, ArrowLeftRight, Plus } from 'lucide-react'
+import { ArrowUpRight, ArrowDownLeft, Repeat, Trash2, ArrowLeftRight, Plus, Pencil } from 'lucide-react'
 
 type TxWithEnvelope = Transaction & { envelope?: Envelope | null }
 
 export default function TransaccionesPage() {
-  const [periodDate, setPeriodDate] = useState(getPeriodDate())
-  const [period, setPeriod] = useState<BudgetPeriod | null>(null)
-  const [envelopes, setEnvelopes] = useState<Envelope[]>([])
+  const [periodDate, setPeriodDate]   = useState(getPeriodDate())
+  const [period, setPeriod]           = useState<BudgetPeriod | null>(null)
+  const [envelopes, setEnvelopes]     = useState<Envelope[]>([])
   const [transactions, setTransactions] = useState<TxWithEnvelope[]>([])
-  const [loading, setLoading] = useState(true)
-  const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all')
+  const [loading, setLoading]         = useState(true)
+  const [filterType, setFilterType]   = useState<'all' | 'income' | 'expense'>('all')
   const [showQuickAdd, setShowQuickAdd] = useState(false)
+  const [editingTx, setEditingTx]     = useState<Transaction | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -28,20 +30,11 @@ export default function TransaccionesPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { data: per } = await supabase
-      .from('budget_periods')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('period_date', periodDate)
-      .single()
+    const [{ data: per }, { data: envs }] = await Promise.all([
+      supabase.from('budget_periods').select('*').eq('user_id', user.id).eq('period_date', periodDate).single(),
+      supabase.from('envelopes').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
+    ])
     setPeriod(per)
-
-    const { data: envs } = await supabase
-      .from('envelopes')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .order('sort_order')
     setEnvelopes(envs ?? [])
 
     if (per) {
@@ -52,6 +45,8 @@ export default function TransaccionesPage() {
         .order('transaction_date', { ascending: false })
         .order('created_at', { ascending: false })
       setTransactions(txs ?? [])
+    } else {
+      setTransactions([])
     }
 
     setLoading(false)
@@ -84,7 +79,6 @@ export default function TransaccionesPage() {
             <h1 className="text-lg sm:text-xl font-bold text-gray-900">Movimientos</h1>
             <p className="text-xs sm:text-sm text-gray-500 mt-0.5 capitalize">{formatPeriodLabel(periodDate)}</p>
           </div>
-          {/* Desktop: inline form button */}
           {period && (
             <div className="hidden sm:block">
               <QuickAddForm envelopes={envelopes} budgetPeriod={period} onSuccess={loadData} />
@@ -95,9 +89,9 @@ export default function TransaccionesPage() {
         {/* Summary cards */}
         <div className="grid grid-cols-3 gap-2 sm:gap-4">
           {[
-            { label: 'Ingresos',   val: totalIncome,              cls: 'text-green-600' },
-            { label: 'Gastos',     val: totalExpense,             cls: 'text-red-600'   },
-            { label: 'Balance',    val: totalIncome - totalExpense,
+            { label: 'Ingresos', val: totalIncome,              cls: 'text-green-600' },
+            { label: 'Gastos',   val: totalExpense,             cls: 'text-red-600'   },
+            { label: 'Balance',  val: totalIncome - totalExpense,
               cls: (totalIncome - totalExpense) >= 0 ? 'text-gray-900' : 'text-red-600' },
           ].map(({ label, val, cls }) => (
             <Card key={label} padding="sm" className="text-center">
@@ -141,17 +135,17 @@ export default function TransaccionesPage() {
                   key={tx.id}
                   className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors group"
                 >
-                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                  {/* Left: icon + info */}
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                     <div className={cn(
                       'h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0',
                       tx.type === 'income' ? 'bg-green-100' : 'bg-red-100'
                     )}>
                       {tx.type === 'income'
                         ? <ArrowUpRight className="h-4 w-4 text-green-600" />
-                        : <ArrowDownLeft className="h-4 w-4 text-red-600" />
-                      }
+                        : <ArrowDownLeft className="h-4 w-4 text-red-600" />}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="text-sm font-medium text-gray-800 truncate">{tx.description}</p>
                         {tx.is_recurring && <Repeat className="h-3 w-3 text-gray-400 flex-shrink-0" />}
@@ -163,16 +157,29 @@ export default function TransaccionesPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                  {/* Right: amount + actions */}
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 ml-3">
                     <span className={cn(
                       'text-sm font-semibold',
                       tx.type === 'income' ? 'text-green-600' : 'text-red-600'
                     )}>
                       {tx.type === 'income' ? '+' : '-'}{formatCOP(tx.amount)}
                     </span>
+
+                    {/* Edit — visible on tap/hover */}
+                    <button
+                      onClick={() => setEditingTx(tx)}
+                      className="p-1.5 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all sm:opacity-0 sm:group-hover:opacity-100"
+                      title="Editar"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+
+                    {/* Delete */}
                     <button
                       onClick={() => handleDelete(tx.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                      className="p-1.5 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all sm:opacity-0 sm:group-hover:opacity-100"
+                      title="Eliminar"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -194,7 +201,7 @@ export default function TransaccionesPage() {
         </button>
       )}
 
-      {/* Mobile quick-add sheet */}
+      {/* Mobile quick-add */}
       {showQuickAdd && period && (
         <div className="sm:hidden">
           <QuickAddForm
@@ -203,6 +210,16 @@ export default function TransaccionesPage() {
             onSuccess={() => { setShowQuickAdd(false); loadData() }}
           />
         </div>
+      )}
+
+      {/* Edit modal */}
+      {editingTx && (
+        <EditTransactionModal
+          transaction={editingTx}
+          envelopes={envelopes}
+          onSuccess={loadData}
+          onClose={() => setEditingTx(null)}
+        />
       )}
     </>
   )

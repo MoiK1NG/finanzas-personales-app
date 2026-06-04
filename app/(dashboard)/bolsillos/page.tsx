@@ -7,8 +7,8 @@ import Header from '@/components/layout/Header'
 import { cn } from '@/lib/utils'
 import type { Envelope, BudgetPeriod, EnvelopeSummary } from '@/types/database'
 import {
-  Plus, Pencil, Trash2, Check, X, AlertCircle,
-  TrendingUp, TrendingDown, Minus, PiggyBank,
+  Plus, Trash2, Check, X, AlertCircle,
+  TrendingUp, TrendingDown, Minus, PiggyBank, Pencil,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -66,6 +66,10 @@ export default function BolsillosPage() {
   const [newIsSavings, setNewIsSavings] = useState(false)
   const [savingNew, setSavingNew] = useState(false)
 
+  // Copy from previous month
+  const [copyingPrev, setCopyingPrev] = useState(false)
+  const [prevPeriodExists, setPrevPeriodExists] = useState(false)
+
   // ── Load data ──────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -73,6 +77,7 @@ export default function BolsillosPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // Current period
     const { data: per } = await supabase
       .from('budget_periods')
       .select('*')
@@ -81,6 +86,18 @@ export default function BolsillosPage() {
       .single()
     setPeriod(per)
     setIncomeValue(per?.projected_income?.toString() ?? '')
+
+    // Check if previous month has a period
+    const prevDate = new Date(periodDate + 'T12:00:00')
+    prevDate.setMonth(prevDate.getMonth() - 1)
+    const prevDateStr = prevDate.toISOString().slice(0, 7) + '-01'
+    const { data: prevPer } = await supabase
+      .from('budget_periods')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('period_date', prevDateStr)
+      .single()
+    setPrevPeriodExists(!!prevPer)
 
     if (per) {
       const { data: sums } = await supabase
@@ -110,6 +127,53 @@ export default function BolsillosPage() {
 
   useEffect(() => { loadData() }, [loadData])
   useEffect(() => { if (editingRow && editRef.current) editRef.current.focus() }, [editingRow])
+
+  // ── Copy budget from previous month ────────────────────────────────────────
+  async function copyFromPreviousMonth() {
+    if (!period) return
+    setCopyingPrev(true)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    // Find previous period
+    const prevDate = new Date(periodDate + 'T12:00:00')
+    prevDate.setMonth(prevDate.getMonth() - 1)
+    const prevDateStr = prevDate.toISOString().slice(0, 7) + '-01'
+
+    const { data: prevPer } = await supabase
+      .from('budget_periods')
+      .select('id, projected_income')
+      .eq('user_id', user!.id)
+      .eq('period_date', prevDateStr)
+      .single()
+
+    if (!prevPer) { setCopyingPrev(false); return }
+
+    // Get previous envelope_budgets
+    const { data: prevBudgets } = await supabase
+      .from('envelope_budgets')
+      .select('envelope_id, projected_amount')
+      .eq('budget_period_id', prevPer.id)
+
+    if (!prevBudgets?.length) { setCopyingPrev(false); return }
+
+    // Upsert into current period (skip envelopes already budgeted)
+    const existingIds = rows.map(r => r.envelopeId)
+    const toInsert = prevBudgets
+      .filter(b => !existingIds.includes(b.envelope_id))
+      .map(b => ({
+        envelope_id: b.envelope_id,
+        budget_period_id: period.id,
+        projected_amount: b.projected_amount,
+      }))
+
+    if (toInsert.length) {
+      await supabase.from('envelope_budgets').insert(toInsert)
+    }
+
+    setCopyingPrev(false)
+    loadData()
+  }
 
   // ── Save income ────────────────────────────────────────────────────────────
   async function saveIncome() {
@@ -264,6 +328,27 @@ export default function BolsillosPage() {
                 </div>
               </div>
             </div>
+
+            {/* ── Copy from previous month banner ──────────────────────────── */}
+            {prevPeriodExists && (
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-blue-800">¿Repetir el presupuesto del mes anterior?</p>
+                  <p className="text-xs text-blue-500 mt-0.5">
+                    Copia categorías y montos del mes anterior. Los movimientos empiezan en cero.
+                  </p>
+                </div>
+                <button
+                  onClick={copyFromPreviousMonth}
+                  disabled={copyingPrev}
+                  className="ml-4 flex-shrink-0 px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors flex items-center gap-1.5"
+                >
+                  {copyingPrev
+                    ? <><span className="h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Copiando...</>
+                    : '↩ Copiar presupuesto'}
+                </button>
+              </div>
+            )}
 
             {/* ── Budget table ──────────────────────────────────────────────── */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
