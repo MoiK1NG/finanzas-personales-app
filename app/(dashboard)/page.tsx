@@ -241,6 +241,7 @@ export default function DashboardPage() {
                   </h2>
                   <QuickAddForm
                     envelopes={envelopes}
+                    bankAccounts={accounts}
                     budgetPeriod={period}
                     onSuccess={loadData}
                   />
@@ -250,6 +251,7 @@ export default function DashboardPage() {
                 <RecentTransactions
                   transactions={recentTx}
                   envelopes={envelopes}
+                  bankAccounts={accounts}
                   onRefresh={loadData}
                 />
               </section>

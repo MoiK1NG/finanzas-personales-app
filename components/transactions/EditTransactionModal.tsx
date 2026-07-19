@@ -5,12 +5,19 @@ import { createClient } from '@/lib/supabase/client'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Select from '@/components/ui/Select'
-import type { Envelope, Transaction } from '@/types/database'
+import type { Envelope, Transaction, BankAccount } from '@/types/database'
 import { X } from 'lucide-react'
+
+function fmtInput(raw: string): string {
+  const digits = raw.replace(/\D/g, '')
+  if (!digits) return ''
+  return new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(parseInt(digits))
+}
 
 interface EditTransactionModalProps {
   transaction: Transaction
   envelopes: Envelope[]
+  bankAccounts: BankAccount[]
   onSuccess: () => void
   onClose: () => void
 }
@@ -18,32 +25,44 @@ interface EditTransactionModalProps {
 export default function EditTransactionModal({
   transaction,
   envelopes,
+  bankAccounts,
   onSuccess,
   onClose,
 }: EditTransactionModalProps) {
-  const [type, setType]               = useState<'income' | 'expense'>(
+  const [type, setType]                   = useState<'income' | 'expense'>(
     transaction.type === 'transfer' ? 'expense' : transaction.type
   )
-  const [amount, setAmount]           = useState(transaction.amount.toString())
-  const [description, setDescription] = useState(transaction.description)
-  const [envelopeId, setEnvelopeId]   = useState(transaction.envelope_id ?? '')
-  const [date, setDate]               = useState(transaction.transaction_date)
-  const [isExecuted, setIsExecuted]   = useState(transaction.is_executed)
-  const [loading, setLoading]         = useState(false)
-  const [error, setError]             = useState<string | null>(null)
+  const [amount, setAmount]               = useState(fmtInput(transaction.amount.toString()))
+  const [description, setDescription]     = useState(transaction.description)
+  const [envelopeId, setEnvelopeId]       = useState(transaction.envelope_id ?? '')
+  const [bankAccountId, setBankAccountId] = useState(transaction.bank_account_id ?? '')
+  const [date, setDate]                   = useState(transaction.transaction_date)
+  const [isExecuted, setIsExecuted]       = useState(transaction.is_executed)
+  const [loading, setLoading]             = useState(false)
+  const [error, setError]                 = useState<string | null>(null)
 
   const envelopeOptions = envelopes.map(e => ({ value: e.id, label: e.name }))
+  const accountOptions  = bankAccounts.map(a => ({ value: a.id, label: a.name }))
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
-    const amt = parseFloat(amount)
+    const amt = parseFloat(amount.replace(/\./g, ''))
     if (!amt || amt <= 0) { setError('Ingresa un monto válido'); return }
     if (!description.trim()) { setError('La descripción es obligatoria'); return }
 
     setLoading(true)
     const supabase = createClient()
+
+    // Reverse old balance effect
+    if (transaction.is_executed && transaction.bank_account_id) {
+      const reverseDelta = transaction.type === 'income' ? -transaction.amount : transaction.amount
+      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', transaction.bank_account_id).single()
+      if (acct) {
+        await supabase.from('bank_accounts').update({ balance: acct.balance + reverseDelta }).eq('id', transaction.bank_account_id)
+      }
+    }
 
     const { error: err } = await supabase
       .from('transactions')
@@ -52,10 +71,20 @@ export default function EditTransactionModal({
         amount: amt,
         description: description.trim(),
         envelope_id: envelopeId || null,
+        bank_account_id: bankAccountId || null,
         transaction_date: date,
         is_executed: isExecuted,
       })
       .eq('id', transaction.id)
+
+    // Apply new balance effect
+    if (!err && isExecuted && bankAccountId) {
+      const delta = type === 'income' ? amt : -amt
+      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', bankAccountId).single()
+      if (acct) {
+        await supabase.from('bank_accounts').update({ balance: acct.balance + delta }).eq('id', bankAccountId)
+      }
+    }
 
     setLoading(false)
     if (err) { setError('Error al guardar. Intenta de nuevo.'); return }
@@ -97,12 +126,10 @@ export default function EditTransactionModal({
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
             <input
-              type="number"
+              type="text"
               inputMode="numeric"
               value={amount}
-              onChange={e => setAmount(e.target.value)}
-              min="0"
-              step="1"
+              onChange={e => setAmount(fmtInput(e.target.value))}
               className="w-full pl-7 pr-3 py-3 text-xl font-bold border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
@@ -127,6 +154,15 @@ export default function EditTransactionModal({
           placeholder="Sin categoría"
           value={envelopeId}
           onChange={e => setEnvelopeId(e.target.value)}
+        />
+
+        {/* Account */}
+        <Select
+          label="Cuenta"
+          options={accountOptions}
+          placeholder="Sin cuenta"
+          value={bankAccountId}
+          onChange={e => setBankAccountId(e.target.value)}
         />
 
         {/* Date */}

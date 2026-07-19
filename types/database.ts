@@ -51,6 +51,7 @@ export interface Transaction {
   id: string
   user_id: string
   envelope_id: string | null
+  bank_account_id: string | null
   budget_period_id: string
   type: TransactionType
   amount: number

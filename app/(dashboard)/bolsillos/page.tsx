@@ -25,6 +25,16 @@ interface RowState {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+function fmtInput(raw: string | number): string {
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw).replace(/\D/g, ''))
+  if (!n || isNaN(n)) return ''
+  return new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(n)
+}
+
+function parseInput(formatted: string): number {
+  return parseFloat(formatted.replace(/\./g, '')) || 0
+}
+
 const COLORS = [
   '#6366f1','#8b5cf6','#ec4899','#ef4444',
   '#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#06b6d4',
@@ -85,7 +95,7 @@ export default function BolsillosPage() {
       .eq('period_date', periodDate)
       .single()
     setPeriod(per)
-    setIncomeValue(per?.projected_income?.toString() ?? '')
+    setIncomeValue(per ? fmtInput(per.projected_income) : '')
 
     // Check if previous month has a period
     const prevDate = new Date(periodDate + 'T12:00:00')
@@ -177,7 +187,7 @@ export default function BolsillosPage() {
 
   // ── Save income ────────────────────────────────────────────────────────────
   async function saveIncome() {
-    const income = parseFloat(incomeValue.replace(/\./g, ''))
+    const income = parseInput(incomeValue)
     if (!income || !period) { setEditingIncome(false); return }
     const supabase = createClient()
     await supabase.from('budget_periods').update({ projected_income: income }).eq('id', period.id)
@@ -187,18 +197,18 @@ export default function BolsillosPage() {
 
   // ── Save projected amount ──────────────────────────────────────────────────
   async function saveProjected(envelopeBudgetId: string) {
-    const amount = parseFloat(editValue) || 0
+    const amount = parseInput(editValue)
     const supabase = createClient()
     await supabase.from('envelope_budgets').update({ projected_amount: amount }).eq('id', envelopeBudgetId)
     setEditingRow(null)
     loadData()
   }
 
-  // ── Archive category ───────────────────────────────────────────────────────
+  // ── Delete category ────────────────────────────────────────────────────────
   async function archiveEnvelope(envelopeId: string, name: string) {
-    if (!confirm(`¿Archivar "${name}"? Los movimientos existentes se conservan.`)) return
+    if (!confirm(`¿Eliminar "${name}"? Los movimientos existentes quedarán sin categoría.`)) return
     const supabase = createClient()
-    await supabase.from('envelopes').update({ is_active: false }).eq('id', envelopeId)
+    await supabase.from('envelopes').delete().eq('id', envelopeId)
     loadData()
   }
 
@@ -218,7 +228,7 @@ export default function BolsillosPage() {
       await supabase.from('envelope_budgets').insert({
         envelope_id: env.id,
         budget_period_id: period.id,
-        projected_amount: parseFloat(newAmount) || 0,
+        projected_amount: parseInput(newAmount),
       })
     }
 
@@ -269,13 +279,13 @@ export default function BolsillosPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-2xl font-bold">$</span>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
                     value={incomeValue}
-                    onChange={e => setIncomeValue(e.target.value)}
+                    onChange={e => setIncomeValue(fmtInput(e.target.value))}
                     onKeyDown={e => { if (e.key === 'Enter') saveIncome(); if (e.key === 'Escape') setEditingIncome(false) }}
                     className="bg-white/20 border border-white/40 rounded-lg px-3 py-1 text-2xl font-bold w-52 focus:outline-none focus:bg-white/30"
                     autoFocus
-                    step="1"
                   />
                   <button onClick={saveIncome} className="p-1.5 bg-white/20 hover:bg-white/30 rounded-lg"><Check className="h-4 w-4" /></button>
                   <button onClick={() => setEditingIncome(false)} className="p-1.5 bg-white/20 hover:bg-white/30 rounded-lg"><X className="h-4 w-4" /></button>
@@ -284,7 +294,7 @@ export default function BolsillosPage() {
                 <div className="flex items-end gap-3">
                   <p className="text-4xl font-bold tracking-tight">{formatCOP(income)}</p>
                   <button
-                    onClick={() => { setIncomeValue(income.toString()); setEditingIncome(true) }}
+                    onClick={() => { setIncomeValue(fmtInput(income)); setEditingIncome(true) }}
                     className="mb-1 p-1.5 bg-white/20 hover:bg-white/30 rounded-lg transition-colors"
                     title="Editar ingreso"
                   >
@@ -399,15 +409,15 @@ export default function BolsillosPage() {
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-2">
                           <div className="flex justify-between">
                             <span className="text-gray-400">Presupuestado</span>
-                            <button onClick={() => { setEditingRow(row.envelopeId); setEditValue(row.projected.toString()) }}
+                            <button onClick={() => { setEditingRow(row.envelopeId); setEditValue(fmtInput(row.projected)) }}
                               className="font-semibold text-gray-700 hover:text-indigo-600">
                               {isEditing ? (
-                                <input ref={editRef} type="number" inputMode="numeric" value={editValue}
-                                  onChange={e => setEditValue(e.target.value)}
+                                <input ref={editRef} type="text" inputMode="numeric" value={editValue}
+                                  onChange={e => setEditValue(fmtInput(e.target.value))}
                                   onBlur={() => saveProjected(row.envelopeBudgetId)}
                                   onKeyDown={e => { if (e.key === 'Enter') saveProjected(row.envelopeBudgetId) }}
                                   className="w-24 text-right border border-indigo-400 rounded px-1 py-0.5 focus:outline-none"
-                                  step="1" min="0" />
+                                />
                               ) : formatCOP(row.projected)}
                             </button>
                           </div>
@@ -439,14 +449,14 @@ export default function BolsillosPage() {
                         </div>
                         <div className="text-right">
                           {isEditing ? (
-                            <input ref={editRef} type="number" value={editValue}
-                              onChange={e => setEditValue(e.target.value)}
+                            <input ref={editRef} type="text" inputMode="numeric" value={editValue}
+                              onChange={e => setEditValue(fmtInput(e.target.value))}
                               onKeyDown={e => { if (e.key === 'Enter') saveProjected(row.envelopeBudgetId); if (e.key === 'Escape') setEditingRow(null) }}
                               onBlur={() => saveProjected(row.envelopeBudgetId)}
                               className="w-28 text-right px-2 py-1 border border-indigo-400 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                              step="1" min="0" />
+                            />
                           ) : (
-                            <button onClick={() => { setEditingRow(row.envelopeId); setEditValue(row.projected.toString()) }}
+                            <button onClick={() => { setEditingRow(row.envelopeId); setEditValue(fmtInput(row.projected)) }}
                               className="text-sm font-semibold text-gray-700 hover:text-indigo-600 hover:underline">
                               {formatCOP(row.projected)}
                             </button>
@@ -515,14 +525,13 @@ export default function BolsillosPage() {
                     <div className="relative">
                       <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="numeric"
                         placeholder="0"
                         value={newAmount}
-                        onChange={e => setNewAmount(e.target.value)}
+                        onChange={e => setNewAmount(fmtInput(e.target.value))}
                         onKeyDown={e => { if (e.key === 'Enter') saveNewCategory() }}
                         className="w-28 text-right pl-5 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        step="1"
-                        min="0"
                       />
                     </div>
                   </div>
@@ -530,7 +539,7 @@ export default function BolsillosPage() {
                   {/* % preview */}
                   <div className="text-right text-xs text-gray-400">
                     {income > 0 && newAmount
-                      ? formatPercent((parseFloat(newAmount) / income) * 100)
+                      ? formatPercent((parseInput(newAmount) / income) * 100)
                       : '—'}
                   </div>
 

@@ -5,11 +5,18 @@ import { createClient } from '@/lib/supabase/client'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Select from '@/components/ui/Select'
-import type { Envelope, BudgetPeriod } from '@/types/database'
+import type { Envelope, BudgetPeriod, BankAccount } from '@/types/database'
 import { PlusCircle, X } from 'lucide-react'
+
+function fmtInput(raw: string): string {
+  const digits = raw.replace(/\D/g, '')
+  if (!digits) return ''
+  return new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(parseInt(digits))
+}
 
 interface QuickAddFormProps {
   envelopes: Envelope[]
+  bankAccounts: BankAccount[]
   budgetPeriod: BudgetPeriod
   onSuccess: () => void
 }
@@ -19,6 +26,7 @@ const INITIAL: {
   amount: string
   description: string
   envelope_id: string
+  bank_account_id: string
   transaction_date: string
   is_executed: boolean
 } = {
@@ -26,23 +34,25 @@ const INITIAL: {
   amount: '',
   description: '',
   envelope_id: '',
+  bank_account_id: '',
   transaction_date: new Date().toISOString().split('T')[0],
   is_executed: true,
 }
 
-export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: QuickAddFormProps) {
+export default function QuickAddForm({ envelopes, bankAccounts, budgetPeriod, onSuccess }: QuickAddFormProps) {
   const [form, setForm] = useState(INITIAL)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
 
   const envelopeOptions = envelopes.map(e => ({ value: e.id, label: e.name }))
+  const accountOptions = bankAccounts.map(a => ({ value: a.id, label: a.name }))
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
-    const amount = parseFloat(form.amount)
+    const amount = parseFloat(form.amount.replace(/\./g, ''))
     if (!amount || amount <= 0) { setError('Ingresa un monto válido'); return }
     if (!form.description.trim()) { setError('Agrega una descripción'); return }
 
@@ -54,12 +64,21 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
       user_id: user!.id,
       budget_period_id: budgetPeriod.id,
       envelope_id: form.envelope_id || null,
+      bank_account_id: form.bank_account_id || null,
       type: form.type,
       amount,
       description: form.description.trim(),
       transaction_date: form.transaction_date,
       is_executed: form.is_executed,
     })
+
+    if (!err && form.is_executed && form.bank_account_id) {
+      const delta = form.type === 'income' ? amount : -amount
+      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', form.bank_account_id).single()
+      if (acct) {
+        await supabase.from('bank_accounts').update({ balance: acct.balance + delta }).eq('id', form.bank_account_id)
+      }
+    }
 
     setLoading(false)
     if (err) { setError('Error al guardar. Intenta de nuevo.'); return }
@@ -89,7 +108,7 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
         <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl p-5 shadow-2xl max-h-[92vh] overflow-y-auto">
           <FormContent
             form={form} setForm={setForm} loading={loading} error={error}
-            envelopeOptions={envelopeOptions}
+            envelopeOptions={envelopeOptions} accountOptions={accountOptions}
             onSubmit={handleSubmit} onClose={() => setOpen(false)}
           />
         </div>
@@ -99,7 +118,7 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
       <div className="hidden sm:block bg-white border border-gray-200 rounded-xl shadow-lg p-5">
         <FormContent
           form={form} setForm={setForm} loading={loading} error={error}
-          envelopeOptions={envelopeOptions}
+          envelopeOptions={envelopeOptions} accountOptions={accountOptions}
           onSubmit={handleSubmit} onClose={() => setOpen(false)}
         />
       </div>
@@ -109,13 +128,14 @@ export default function QuickAddForm({ envelopes, budgetPeriod, onSuccess }: Qui
 
 // ── Shared form body ──────────────────────────────────────────────────────────
 function FormContent({
-  form, setForm, loading, error, envelopeOptions, onSubmit, onClose,
+  form, setForm, loading, error, envelopeOptions, accountOptions, onSubmit, onClose,
 }: {
   form: typeof INITIAL
   setForm: React.Dispatch<React.SetStateAction<typeof INITIAL>>
   loading: boolean
   error: string | null
   envelopeOptions: { value: string; label: string }[]
+  accountOptions: { value: string; label: string }[]
   onSubmit: (e: React.FormEvent) => void
   onClose: () => void
 }) {
@@ -147,19 +167,17 @@ function FormContent({
           ))}
         </div>
 
-        {/* Amount — large on mobile */}
+        {/* Amount */}
         <div>
           <label className="text-sm font-medium text-gray-700 block mb-1">Monto (COP)</label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
             <input
-              type="number"
+              type="text"
               inputMode="numeric"
               placeholder="0"
               value={form.amount}
-              onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
-              min="0"
-              step="1"
+              onChange={e => setForm(f => ({ ...f, amount: fmtInput(e.target.value) }))}
               className="w-full pl-7 pr-3 py-3 text-xl font-bold border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
               autoFocus
             />
@@ -183,6 +201,14 @@ function FormContent({
           placeholder="Sin categoría"
           value={form.envelope_id}
           onChange={e => setForm(f => ({ ...f, envelope_id: e.target.value }))}
+        />
+
+        <Select
+          label="Cuenta"
+          options={accountOptions}
+          placeholder="Sin cuenta"
+          value={form.bank_account_id}
+          onChange={e => setForm(f => ({ ...f, bank_account_id: e.target.value }))}
         />
 
         <Input

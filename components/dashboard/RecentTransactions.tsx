@@ -5,17 +5,18 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import { formatCOP, formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 import { ArrowUpRight, ArrowDownLeft, Pencil } from 'lucide-react'
-import type { Transaction, Envelope } from '@/types/database'
+import type { Transaction, Envelope, BankAccount } from '@/types/database'
 import NextLink from 'next/link'
 import EditTransactionModal from '@/components/transactions/EditTransactionModal'
 
 interface RecentTransactionsProps {
   transactions: (Transaction & { envelope?: Envelope | null })[]
   envelopes: Envelope[]
+  bankAccounts: BankAccount[]
   onRefresh: () => void
 }
 
-export default function RecentTransactions({ transactions, envelopes, onRefresh }: RecentTransactionsProps) {
+export default function RecentTransactions({ transactions, envelopes, bankAccounts, onRefresh }: RecentTransactionsProps) {
   const [editingTx, setEditingTx] = useState<Transaction | null>(null)
 
   return (
@@ -82,6 +83,7 @@ export default function RecentTransactions({ transactions, envelopes, onRefresh 
         <EditTransactionModal
           transaction={editingTx}
           envelopes={envelopes}
+          bankAccounts={bankAccounts}
           onSuccess={() => { setEditingTx(null); onRefresh() }}
           onClose={() => setEditingTx(null)}
         />

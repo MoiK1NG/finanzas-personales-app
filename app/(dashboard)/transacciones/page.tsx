@@ -9,7 +9,7 @@ import EditTransactionModal from '@/components/transactions/EditTransactionModal
 import { Card } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import { cn } from '@/lib/utils'
-import type { Envelope, BudgetPeriod, Transaction } from '@/types/database'
+import type { Envelope, BudgetPeriod, Transaction, BankAccount } from '@/types/database'
 import { ArrowUpRight, ArrowDownLeft, Repeat, Trash2, ArrowLeftRight, Plus, Pencil } from 'lucide-react'
 
 type TxWithEnvelope = Transaction & { envelope?: Envelope | null }
@@ -18,6 +18,7 @@ export default function TransaccionesPage() {
   const [periodDate, setPeriodDate]   = useState(getPeriodDate())
   const [period, setPeriod]           = useState<BudgetPeriod | null>(null)
   const [envelopes, setEnvelopes]     = useState<Envelope[]>([])
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [transactions, setTransactions] = useState<TxWithEnvelope[]>([])
   const [loading, setLoading]         = useState(true)
   const [filterType, setFilterType]   = useState<'all' | 'income' | 'expense'>('all')
@@ -30,12 +31,14 @@ export default function TransaccionesPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const [{ data: per }, { data: envs }] = await Promise.all([
+    const [{ data: per }, { data: envs }, { data: accts }] = await Promise.all([
       supabase.from('budget_periods').select('*').eq('user_id', user.id).eq('period_date', periodDate).single(),
       supabase.from('envelopes').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
+      supabase.from('bank_accounts').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
     ])
     setPeriod(per)
     setEnvelopes(envs ?? [])
+    setBankAccounts(accts ?? [])
 
     if (per) {
       const { data: txs } = await supabase
@@ -57,6 +60,14 @@ export default function TransaccionesPage() {
   async function handleDelete(id: string) {
     if (!confirm('¿Eliminar este movimiento?')) return
     const supabase = createClient()
+    const tx = transactions.find(t => t.id === id)
+    if (tx?.is_executed && tx.bank_account_id) {
+      const delta = tx.type === 'income' ? -tx.amount : tx.amount
+      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', tx.bank_account_id).single()
+      if (acct) {
+        await supabase.from('bank_accounts').update({ balance: acct.balance + delta }).eq('id', tx.bank_account_id)
+      }
+    }
     await supabase.from('transactions').delete().eq('id', id)
     loadData()
   }
@@ -81,7 +92,7 @@ export default function TransaccionesPage() {
           </div>
           {period && (
             <div className="hidden sm:block">
-              <QuickAddForm envelopes={envelopes} budgetPeriod={period} onSuccess={loadData} />
+              <QuickAddForm envelopes={envelopes} bankAccounts={bankAccounts} budgetPeriod={period} onSuccess={loadData} />
             </div>
           )}
         </div>
@@ -206,6 +217,7 @@ export default function TransaccionesPage() {
         <div className="sm:hidden">
           <QuickAddForm
             envelopes={envelopes}
+            bankAccounts={bankAccounts}
             budgetPeriod={period}
             onSuccess={() => { setShowQuickAdd(false); loadData() }}
           />
@@ -217,6 +229,7 @@ export default function TransaccionesPage() {
         <EditTransactionModal
           transaction={editingTx}
           envelopes={envelopes}
+          bankAccounts={bankAccounts}
           onSuccess={loadData}
           onClose={() => setEditingTx(null)}
         />
