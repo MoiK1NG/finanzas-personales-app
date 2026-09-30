@@ -1,63 +1,72 @@
+import type { CSSProperties } from 'react'
+import { PiggyBank, Wallet } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
-import { formatCOP, formatPercent } from '@/lib/utils'
-import { cn } from '@/lib/utils'
+import Badge from '@/components/ui/Badge'
+import Money from '@/components/ui/Money'
+import ProgressBar from '@/components/ui/ProgressBar'
+import { cn, formatCOP, formatPercent, getSpendTone } from '@/lib/utils'
 import type { EnvelopeSummary } from '@/types/database'
+
+const TONE_TEXT = { ok: 'text-income', warning: 'text-warning', over: 'text-expense' } as const
+
+/** Tint derived from the user's color so it reads on light and dark surfaces. */
+function tintStyle(color: string): CSSProperties {
+  return {
+    backgroundColor: `color-mix(in oklch, ${color} 16%, var(--surface))`,
+    color: `color-mix(in oklch, ${color} 75%, var(--fg))`,
+  }
+}
 
 interface EnvelopeProgressCardProps {
   envelope: EnvelopeSummary
+  className?: string
 }
 
-export default function EnvelopeProgressCard({ envelope }: EnvelopeProgressCardProps) {
-  const pct = Math.min(envelope.pct_executed, 100)
+export default function EnvelopeProgressCard({ envelope, className }: EnvelopeProgressCardProps) {
   const isOver = envelope.executed_amount > envelope.projected_amount
+  // The view reports 0% when there is no budget, so spending without a budget needs its own label.
+  const spentWithoutBudget = envelope.projected_amount === 0 && envelope.executed_amount > 0
+  const tone = getSpendTone(envelope.pct_executed, isOver)
+  const Icon = envelope.is_savings ? PiggyBank : Wallet
 
   return (
-    <Card padding="sm" className="hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <div
-            className="h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0 text-sm"
-            style={{ backgroundColor: envelope.color + '20', color: envelope.color }}
-          >
-            💰
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-gray-800 truncate">{envelope.envelope_name}</p>
-            <p className="text-xs text-gray-500">
-              {formatCOP(envelope.executed_amount)} de {formatCOP(envelope.projected_amount)}
-            </p>
-          </div>
-        </div>
+    <Card padding="sm" className={className}>
+      <div className="flex items-start gap-3">
         <span
-          className={cn(
-            'text-xs font-bold ml-2 flex-shrink-0',
-            isOver ? 'text-red-600' : pct >= 80 ? 'text-yellow-600' : 'text-green-600'
-          )}
+          aria-hidden="true"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+          style={tintStyle(envelope.color)}
         >
-          {formatPercent(envelope.pct_executed)}
+          <Icon className="h-4 w-4" />
         </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="truncate text-sm font-semibold text-fg">{envelope.envelope_name}</p>
+            {envelope.is_savings && <Badge variant="indigo">Ahorro</Badge>}
+          </div>
+          <p className="mt-0.5 text-xs text-fg-subtle tabular-nums">
+            <span className="sr-only">Gastado </span>
+            {formatCOP(envelope.executed_amount)} de {formatCOP(envelope.projected_amount)}
+          </p>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <Money
+            value={isOver ? Math.abs(envelope.available_amount) : envelope.available_amount}
+            className={cn('block text-sm font-semibold sm:text-base', isOver ? 'text-expense' : 'text-fg')}
+          />
+          <p className={cn('text-xs', isOver ? 'font-medium text-expense' : 'text-fg-subtle')}>
+            {isOver ? 'excedido' : 'disponible'}
+          </p>
+        </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-        <div
-          className={cn(
-            'h-full rounded-full transition-all duration-500',
-            isOver ? 'bg-red-500' : pct >= 80 ? 'bg-yellow-400' : 'bg-green-500'
-          )}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-
-      <div className="flex justify-between mt-1.5">
-        <span className="text-xs text-gray-400">
-          Disponible: <span className={cn('font-medium', envelope.available_amount < 0 ? 'text-red-600' : 'text-gray-700')}>
-            {formatCOP(envelope.available_amount)}
-          </span>
+      <div className="mt-3 flex items-center gap-2">
+        <ProgressBar value={spentWithoutBudget ? 100 : envelope.pct_executed} tone={tone} size="sm" className="flex-1" />
+        <span className={cn('shrink-0 text-xs font-medium tabular-nums', TONE_TEXT[tone])}>
+          {spentWithoutBudget ? 'Sin presupuesto' : `${formatPercent(envelope.pct_executed)} gastado`}
         </span>
-        {envelope.is_savings && (
-          <span className="text-xs text-indigo-500 font-medium">Ahorro</span>
-        )}
       </div>
     </Card>
   )

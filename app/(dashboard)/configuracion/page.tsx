@@ -1,109 +1,224 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Header from '@/components/layout/Header'
-import { Card } from '@/components/ui/Card'
+import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
-import { getPeriodDate } from '@/lib/utils'
+import Alert from '@/components/ui/Alert'
+import Badge from '@/components/ui/Badge'
+import PageHeader from '@/components/ui/PageHeader'
+import { LoadingState } from '@/components/ui/Spinner'
+import { useSignOut } from '@/hooks/useSignOut'
 import type { Profile } from '@/types/database'
-import { User, Shield } from 'lucide-react'
+import { Coins, Lock, LogOut, RefreshCw, User } from 'lucide-react'
+
+const LOAD_ERROR = 'No pudimos cargar tu perfil. Revisa tu conexión e intenta de nuevo.'
 
 export default function ConfiguracionPage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  /** getUser() returned no user: there is nothing to edit until the profile loads. */
+  const [noUser, setNoUser] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [nameError, setNameError] = useState<string | null>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const { signOut, signingOut, signOutError } = useSignOut()
 
   useEffect(() => {
     async function load() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) {
+        setNoUser(true)
+        setLoadError(LOAD_ERROR)
+        setLoading(false)
+        return
+      }
 
       setEmail(user.email ?? '')
-      const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      const { data: prof, error } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       setProfile(prof)
       setFullName(prof?.full_name ?? '')
+      if (error) setLoadError(LOAD_ERROR)
       setLoading(false)
     }
     load()
-  }, [])
+  }, [reloadKey])
+
+  function retryLoad() {
+    setLoading(true)
+    setLoadError(null)
+    setNoUser(false)
+    setReloadKey(k => k + 1)
+  }
+
+  const savedName = profile?.full_name ?? ''
+  const hasChanges = fullName.trim() !== savedName.trim()
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
-    setSaving(true)
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    setSaveError(null)
+    setSuccess(false)
 
-    await supabase.from('profiles').update({ full_name: fullName.trim() }).eq('id', user.id)
-    setSaving(false)
-    setSuccess(true)
-    setTimeout(() => setSuccess(false), 3000)
+    if (!fullName.trim()) {
+      setNameError('Ingresa tu nombre.')
+      // Move focus to the field so its error (linked through aria-describedby) is read out.
+      nameRef.current?.focus()
+      return
+    }
+
+    setSaving(true)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setSaveError('No pudimos verificar tu sesión. Revisa tu conexión o vuelve a iniciar sesión.')
+        return
+      }
+
+      const { error } = await supabase.from('profiles').update({ full_name: fullName.trim() }).eq('id', user.id)
+      if (error) {
+        setSaveError('No pudimos guardar los cambios. Intenta de nuevo.')
+        return
+      }
+
+      setProfile(prev => (prev ? { ...prev, full_name: fullName.trim() } : prev))
+      setSuccess(true)
+    } catch {
+      setSaveError('No pudimos guardar los cambios. Revisa tu conexión e intenta de nuevo.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <>
-      <Header periodDate={getPeriodDate()} onPeriodChange={() => {}} />
+      <Header userName={profile?.full_name} />
 
-      <main className="p-6 max-w-2xl">
-        <h1 className="text-xl font-bold text-gray-900 mb-6">Configuración</h1>
+      <main className="mx-auto w-full max-w-5xl px-4 py-5 sm:px-6 sm:py-6 space-y-5 sm:space-y-6">
+        <PageHeader title="Configuración" />
 
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin h-6 w-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <Card>
-              <div className="flex items-center gap-2 mb-4">
-                <User className="h-4 w-4 text-gray-500" />
-                <h2 className="text-sm font-semibold text-gray-700">Perfil</h2>
-              </div>
-              <form onSubmit={handleSave} className="space-y-4">
+        <div className="max-w-2xl space-y-4 sm:space-y-5">
+          {loadError && (
+            <Alert
+              tone="danger"
+              action={
+                <Button variant="secondary" size="sm" onClick={retryLoad}>
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  Reintentar
+                </Button>
+              }
+            >
+              {loadError}
+            </Alert>
+          )}
+
+          {/* Perfil */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <User className="h-4 w-4" aria-hidden="true" />
+                Perfil
+              </CardTitle>
+            </CardHeader>
+
+            {loading ? (
+              <LoadingState className="py-8" label="Cargando perfil" />
+            ) : noUser ? (
+              <p className="text-sm text-fg-subtle">
+                Cuando se cargue tu perfil podrás cambiar tu nombre aquí.
+              </p>
+            ) : (
+              <form onSubmit={handleSave} noValidate className="space-y-4">
                 <Input
+                  ref={nameRef}
                   label="Nombre completo"
+                  autoComplete="name"
+                  autoCapitalize="words"
                   value={fullName}
-                  onChange={e => setFullName(e.target.value)}
+                  onChange={e => {
+                    setFullName(e.target.value)
+                    if (nameError) setNameError(null)
+                    if (success) setSuccess(false)
+                  }}
                   placeholder="Tu nombre"
+                  error={nameError ?? undefined}
                 />
-                <Input
-                  label="Correo electrónico"
-                  value={email}
-                  disabled
-                />
-                <div className="flex items-center gap-3">
-                  <Button type="submit" loading={saving}>
-                    Guardar cambios
-                  </Button>
-                  {success && (
-                    <p className="text-sm text-green-600 font-medium">¡Guardado!</p>
-                  )}
-                </div>
-              </form>
-            </Card>
 
-            <Card>
-              <div className="flex items-center gap-2 mb-4">
-                <Shield className="h-4 w-4 text-gray-500" />
-                <h2 className="text-sm font-semibold text-gray-700">Cuenta</h2>
+                <dl className="flex flex-col gap-1.5">
+                  <dt className="text-sm font-medium text-fg-muted">Correo electrónico</dt>
+                  <dd className="flex min-h-11 items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-base text-fg-muted sm:min-h-10 sm:text-sm">
+                    <Lock className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
+                    <span className="min-w-0 break-all">{email || '—'}</span>
+                  </dd>
+                  <dd className="text-xs text-fg-subtle">No se puede cambiar</dd>
+                </dl>
+
+                {saveError && <Alert tone="danger">{saveError}</Alert>}
+                {success && <Alert tone="success">Guardamos tu nombre.</Alert>}
+
+                <Button
+                  type="submit"
+                  loading={saving}
+                  disabled={!hasChanges}
+                  className="w-full sm:w-auto"
+                >
+                  Guardar cambios
+                </Button>
+              </form>
+            )}
+          </Card>
+
+          {/* Preferencias */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Coins className="h-4 w-4" aria-hidden="true" />
+                Preferencias
+              </CardTitle>
+            </CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-fg">Moneda</p>
+                <p className="text-sm text-fg-subtle">Peso colombiano (COP)</p>
               </div>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">Moneda</p>
-                    <p className="text-xs text-gray-500">Peso colombiano (COP)</p>
-                  </div>
-                  <span className="text-sm text-gray-500 font-medium">COP</span>
-                </div>
+              <Badge variant="gray">Fija</Badge>
+            </div>
+          </Card>
+
+          {/* Sesión — the only way to sign out on phones */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+                Sesión
+              </CardTitle>
+            </CardHeader>
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-fg-muted">Cierra la sesión en este dispositivo.</p>
+                <Button
+                  variant="secondary"
+                  loading={signingOut}
+                  onClick={signOut}
+                  className="w-full text-expense sm:w-auto"
+                >
+                  {!signingOut && <LogOut className="h-4 w-4" aria-hidden="true" />}
+                  Cerrar sesión
+                </Button>
               </div>
-            </Card>
-          </div>
-        )}
+              {signOutError && <Alert tone="danger">{signOutError}</Alert>}
+            </div>
+          </Card>
+        </div>
       </main>
     </>
   )

@@ -1,65 +1,72 @@
+import Link from 'next/link'
+import { ChevronRight, CircleCheck, TriangleAlert } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
-import { formatCOP } from '@/lib/utils'
-import { cn } from '@/lib/utils'
-import { AlertTriangle, CheckCircle } from 'lucide-react'
+import Money from '@/components/ui/Money'
+import { cn, focusRing } from '@/lib/utils'
 
 interface BalanceDiscrepancyProps {
-  projectedIncome: number
-  totalBudgeted: number
   realBankBalance: number      // suma de todas las cuentas
   realIncomeReceived: number
   realExpensesPaid: number
 }
 
 export default function BalanceDiscrepancy({
-  projectedIncome,
-  totalBudgeted,
   realBankBalance,
   realIncomeReceived,
   realExpensesPaid,
 }: BalanceDiscrepancyProps) {
-  const theoreticalBalance = projectedIncome - totalBudgeted
   const cashFlow = realIncomeReceived - realExpensesPaid
   const discrepancy = realBankBalance - cashFlow
   const isOk = Math.abs(discrepancy) < 5000
 
   return (
-    <Card className={cn('border-l-4', isOk ? 'border-l-green-500' : 'border-l-yellow-500')}>
+    <Card className={cn('border-l-4', isOk ? 'border-l-income-solid' : 'border-l-warning-solid')}>
       <div className="flex items-start gap-3">
         {isOk
-          ? <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-          : <AlertTriangle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+          ? <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-income" aria-hidden="true" />
+          : <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
         }
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-gray-800 mb-3">
-            {isOk ? 'Saldos cuadrados ✓' : 'Revisar discrepancia'}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-fg">
+            {isOk ? 'Saldos cuadrados' : 'Revisa la diferencia'}
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 text-sm">
-            <div>
-              <p className="text-xs text-gray-500">Saldo Teórico</p>
-              <p className={cn('font-semibold', theoreticalBalance < 0 ? 'text-red-600' : 'text-gray-800')}>
-                {formatCOP(theoreticalBalance)}
-              </p>
+          <p className="mt-0.5 text-xs text-fg-subtle">
+            Compara tu saldo en cuentas con el flujo del mes (ingresos menos gastos ejecutados).
+          </p>
+
+          <dl className="mt-3 space-y-2 text-sm">
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-fg-muted">Saldo en cuentas</dt>
+              <dd className="font-semibold text-fg">
+                <Money value={realBankBalance} variant="balance" />
+              </dd>
             </div>
-            <div>
-              <p className="text-xs text-gray-500">Saldo Real (cuentas)</p>
-              <p className={cn('font-semibold', realBankBalance < 0 ? 'text-red-600' : 'text-gray-800')}>
-                {formatCOP(realBankBalance)}
-              </p>
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-fg-muted">Flujo del mes</dt>
+              <dd className="font-semibold">
+                <Money value={cashFlow} variant={cashFlow >= 0 ? 'income' : 'expense'} />
+              </dd>
             </div>
-            <div>
-              <p className="text-xs text-gray-500">Flujo real</p>
-              <p className={cn('font-semibold', cashFlow >= 0 ? 'text-green-600' : 'text-red-600')}>
-                {formatCOP(cashFlow)}
-              </p>
+            <div className="flex items-baseline justify-between gap-3 border-t border-border pt-2">
+              <dt className="text-fg-muted">Diferencia</dt>
+              <dd className={cn('font-semibold tabular-nums whitespace-nowrap', isOk ? 'text-income' : 'text-warning')}>
+                {discrepancy >= 0 && '+'}
+                <Money value={discrepancy} />
+              </dd>
             </div>
-            <div>
-              <p className="text-xs text-gray-500">Diferencia</p>
-              <p className={cn('font-semibold', isOk ? 'text-green-600' : 'text-yellow-600')}>
-                {discrepancy >= 0 ? '+' : ''}{formatCOP(discrepancy)}
-              </p>
-            </div>
-          </div>
+          </dl>
+
+          {!isOk && (
+            <Link
+              href="/transacciones"
+              className={cn(
+                '-mb-2 -ml-2 mt-2 inline-flex min-h-10 items-center gap-0.5 rounded-lg px-2 text-sm font-medium text-accent transition-colors hover:bg-primary-soft',
+                focusRing
+              )}
+            >
+              Revisar movimientos <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          )}
         </div>
       </div>
     </Card>
