@@ -25,6 +25,8 @@ const thClass = 'px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-
 interface BudgetTableProps {
   summaries: EnvelopeSummary[]
   projectedIncome: number
+  /** projected income − total budgeted − overspending carried from last month (v_period_summary). */
+  unassigned: number
   budgetPeriodId: string
   onRefresh: () => void
 }
@@ -32,6 +34,7 @@ interface BudgetTableProps {
 export default function BudgetTable({
   summaries,
   projectedIncome,
+  unassigned,
   onRefresh,
 }: BudgetTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -90,8 +93,9 @@ export default function BudgetTable({
   }
 
   const totalBudgeted = summaries.reduce((a, s) => a + s.projected_amount, 0)
+  const totalCarryover = summaries.reduce((a, s) => a + s.carryover_amount, 0)
   const totalExecuted = summaries.reduce((a, s) => a + s.executed_amount, 0)
-  const unassigned = projectedIncome - totalBudgeted
+  const totalAvailable = summaries.reduce((a, s) => a + s.available_amount, 0)
 
   return (
     <Card padding="none" className="overflow-hidden">
@@ -126,8 +130,9 @@ export default function BudgetTable({
 
           <tbody className="divide-y divide-border">
             {summaries.map(s => {
-              const isOver = s.executed_amount > s.projected_amount
-              const spentWithoutBudget = s.projected_amount === 0 && s.executed_amount > 0
+              // Against what can be spent: budgeted + carry-over from last month.
+              const isOver = s.executed_amount > s.spendable_amount
+              const spentWithoutBudget = s.spendable_amount <= 0 && s.executed_amount > 0
               const tone = getSpendTone(s.pct_executed, isOver)
               const isEditing = editingId === s.envelope_id
 
@@ -203,6 +208,11 @@ export default function BudgetTable({
                         />
                       </button>
                     )}
+                    {s.carryover_amount > 0 && (
+                      <p className="mt-1 text-xs text-income tabular-nums">
+                        +<Money value={s.carryover_amount} /> traslado
+                      </p>
+                    )}
                   </td>
 
                   {/* Gastado */}
@@ -252,10 +262,17 @@ export default function BudgetTable({
           <tfoot>
             <tr className="border-t-2 border-border bg-surface-2 font-semibold text-fg">
               <th scope="row" className="sticky left-0 z-10 bg-surface-2 px-4 py-3 text-left">Total</th>
-              <td className="px-3 py-3 text-right"><Money value={totalBudgeted} /></td>
+              <td className="px-3 py-3 text-right">
+                <Money value={totalBudgeted} />
+                {totalCarryover > 0 && (
+                  <p className="text-xs font-normal text-income tabular-nums">
+                    +<Money value={totalCarryover} /> traslado
+                  </p>
+                )}
+              </td>
               <td className="px-3 py-3 text-right"><Money value={totalExecuted} /></td>
               <td className="px-3 py-3 text-right">
-                <Money value={totalBudgeted - totalExecuted} variant="balance" />
+                <Money value={totalAvailable} variant="balance" />
               </td>
               <td className="px-3 py-3" />
               <td className="px-3 py-3 text-right font-normal text-fg-muted tabular-nums">

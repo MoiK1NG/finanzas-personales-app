@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
-  cn, focusRing, formatCOP, formatPercent,
+  cn, focusRing, formatCOP, formatPercent, formatPeriodLabel, getPeriodDate, shiftPeriod,
   formatMoneyInput, parseMoneyInput, getSpendTone, type SpendTone,
 } from '@/lib/utils'
 import { usePeriod } from '@/hooks/usePeriod'
@@ -23,8 +23,14 @@ import { LoadingState } from '@/components/ui/Spinner'
 import ProgressBar from '@/components/ui/ProgressBar'
 import BudgetStatusPill from '@/components/ui/BudgetStatusPill'
 import Money from '@/components/ui/Money'
-import type { BudgetPeriod, EnvelopeSummary } from '@/types/database'
-import { Plus, Trash2, Check, X, Pencil, PiggyBank, Copy } from 'lucide-react'
+import ClosedMonthAlert from '@/components/budget/ClosedMonthAlert'
+import MonthCloseCard from '@/components/budget/MonthCloseCard'
+import ColorSwatches, { CATEGORY_COLORS } from '@/components/envelopes/ColorSwatches'
+import EditCategoryModal, { type EditableCategory } from '@/components/envelopes/EditCategoryModal'
+import type { BudgetPeriod, EnvelopeSummary, PeriodSummary } from '@/types/database'
+import {
+  Plus, Trash2, Check, X, Pencil, PiggyBank, Copy, ArrowUpDown, ChevronUp, ChevronDown,
+} from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface RowState {
@@ -33,10 +39,24 @@ interface RowState {
   name: string
   color: string
   isSavings: boolean
+  sortOrder: number
   projected: number
+  /** Leftover received from the closed previous month. */
+  carryover: number
+  /** projected + carryover: what can be spent this month. */
+  spendable: number
   executed: number
+  /** Projected (not confirmed) expenses. */
+  pending: number
+  /** spendable − executed (from v_envelope_summary). */
   available: number
+  /** executed ÷ spendable, in % (from v_envelope_summary). */
   pct: number
+}
+
+interface PrevPeriod {
+  id: string
+  closedAt: string | null
 }
 
 interface CopyResult {
@@ -54,23 +74,45 @@ function toInput(amount: number): string {
   return amount ? formatMoneyInput(amount) : ''
 }
 
-const COLORS = [
-  { value: '#6366f1', name: 'Índigo' },
-  { value: '#8b5cf6', name: 'Violeta' },
-  { value: '#ec4899', name: 'Rosa' },
-  { value: '#ef4444', name: 'Rojo' },
-  { value: '#f97316', name: 'Naranja' },
-  { value: '#eab308', name: 'Amarillo' },
-  { value: '#22c55e', name: 'Verde' },
-  { value: '#14b8a6', name: 'Verde azulado' },
-  { value: '#3b82f6', name: 'Azul' },
-  { value: '#06b6d4', name: 'Cian' },
-]
+const COLORS = CATEGORY_COLORS
 
 /** First palette color no category of this month uses yet. */
 function nextColor(rows: RowState[]): string {
   const used = new Set(rows.map(r => r.color.toLowerCase()))
   return (COLORS.find(c => !used.has(c.value)) ?? COLORS[rows.length % COLORS.length]).value
+}
+
+function toRow(s: EnvelopeSummary): RowState {
+  return {
+    envelopeId:       s.envelope_id,
+    envelopeBudgetId: s.envelope_budget_id,
+    name:             s.envelope_name,
+    color:            s.color,
+    isSavings:        s.is_savings,
+    sortOrder:        Number(s.sort_order ?? 0),
+    projected:        Number(s.projected_amount),
+    carryover:        Number(s.carryover_amount ?? 0),
+    spendable:        Number(s.spendable_amount),
+    executed:         Number(s.executed_amount),
+    pending:          Number(s.planned_pending_amount ?? 0),
+    available:        Number(s.available_amount),
+    pct:              Number(s.pct_executed),
+  }
+}
+
+/** The view does not order its rows: categories go by their saved order, then by name. */
+function sortRows(rows: RowState[]): RowState[] {
+  return [...rows].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'es'))
+}
+
+/** "+$ 150.000 traslado" under a Presupuestado figure, when the previous month sent a leftover. */
+function CarryoverNote({ amount, className }: { amount: number; className?: string }) {
+  if (amount <= 0) return null
+  return (
+    <p className={cn('text-xs text-income tabular-nums whitespace-nowrap', className)}>
+      +<Money value={amount} /> traslado
+    </p>
+  )
 }
 
 const TONE_TEXT: Record<SpendTone, string> = {
@@ -79,10 +121,10 @@ const TONE_TEXT: Record<SpendTone, string> = {
   over: 'text-expense',
 }
 
-/** Spend status of a budget line. With nothing budgeted but money spent, a % means nothing. */
-function spendOf(projected: number, executed: number, pct: number) {
-  const isOver = executed > projected
-  const unbudgeted = projected <= 0 && executed > 0
+/** Spend status of a budget line, against what can be spent (budgeted + carry-over). With nothing to spend but money spent, a % means nothing. */
+function spendOf(spendable: number, executed: number, pct: number) {
+  const isOver = executed > spendable
+  const unbudgeted = spendable <= 0 && executed > 0
   return {
     isOver,
     tone: getSpendTone(pct, isOver),
@@ -98,6 +140,7 @@ const HERO_ICON_BUTTON = 'bg-white/15 text-white hover:bg-white/25 hover:text-wh
 export default function BolsillosPage() {
   const [periodDate, setPeriodDate] = usePeriod()
   const [period, setPeriod] = useState<BudgetPeriod | null>(null)
+  const [periodSummary, setPeriodSummary] = useState<PeriodSummary | null>(null)
   const [rows, setRows] = useState<RowState[]>([])
   const [loading, setLoading] = useState(true)
   const [pageError, setPageError] = useState<string | null>(null)
@@ -124,9 +167,16 @@ export default function BolsillosPage() {
   const [savingNew, setSavingNew] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
 
+  // Edit a category (name, color, savings)
+  const [editingCategory, setEditingCategory] = useState<EditableCategory | null>(null)
+
+  // Order mode: up/down buttons, saved with "Listo"
+  const [ordering, setOrdering] = useState(false)
+  const [savingOrder, setSavingOrder] = useState(false)
+
   // Copy from previous month
   const [copyingPrev, setCopyingPrev] = useState(false)
-  const [prevPeriodExists, setPrevPeriodExists] = useState(false)
+  const [prevPeriod, setPrevPeriod] = useState<PrevPeriod | null>(null)
   const [copyResult, setCopyResult] = useState<CopyResult | null>(null)
 
   // ── Load data ──────────────────────────────────────────────────────────────
@@ -137,6 +187,9 @@ export default function BolsillosPage() {
   const selectedPeriodRef = useRef(periodDate)
   const loadSeqRef = useRef(0)
   useEffect(() => { selectedPeriodRef.current = periodDate }, [periodDate])
+  // In order mode the list on screen holds unsaved moves; a refresh must not put the old order back.
+  const orderingRef = useRef(false)
+  useEffect(() => { orderingRef.current = ordering }, [ordering])
 
   // background: refresh after a change without replacing the content with the spinner.
   const loadData = useCallback(async (background = false) => {
@@ -149,55 +202,50 @@ export default function BolsillosPage() {
     if (isStale()) return
     if (!user) { setLoading(false); return }
 
-    // Current period
-    const { data: per } = await supabase
-      .from('budget_periods')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('period_date', periodDate)
-      .single()
+    // Current period, and the previous one (copy offer, and whether it is still open)
+    const [{ data: per }, { data: prevPer }] = await Promise.all([
+      supabase
+        .from('budget_periods')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('period_date', periodDate)
+        .maybeSingle(),
+      supabase
+        .from('budget_periods')
+        .select('id, closed_at')
+        .eq('user_id', user.id)
+        .eq('period_date', shiftPeriod(periodDate, -1))
+        .maybeSingle(),
+    ])
     if (isStale()) return
-    setPeriod(per)
+
+    let nextRows: RowState[] = []
+    let summary: PeriodSummary | null = null
+    if (per) {
+      const [{ data: sums }, { data: perSum }] = await Promise.all([
+        supabase
+          .from('v_envelope_summary')
+          .select('*')
+          .eq('budget_period_id', per.id)
+          .eq('user_id', user.id),
+        supabase
+          .from('v_period_summary')
+          .select('*')
+          .eq('budget_period_id', per.id)
+          .eq('user_id', user.id)
+          .maybeSingle(),
+      ])
+      if (isStale()) return
+      nextRows = sortRows((sums ?? []).map(toRow))
+      summary = perSum
+    }
+
     // The income field is seeded when you open it (startEditIncome), so a refresh that lands while
     // you are typing a new income doesn't overwrite it.
-
-    // Check if previous month has a period
-    const prevDate = new Date(periodDate + 'T12:00:00')
-    prevDate.setMonth(prevDate.getMonth() - 1)
-    const prevDateStr = prevDate.toISOString().slice(0, 7) + '-01'
-    const { data: prevPer } = await supabase
-      .from('budget_periods')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('period_date', prevDateStr)
-      .single()
-    if (isStale()) return
-    setPrevPeriodExists(!!prevPer)
-
-    if (per) {
-      const { data: sums } = await supabase
-        .from('v_envelope_summary')
-        .select('*')
-        .eq('budget_period_id', per.id)
-        .eq('user_id', user.id)
-      if (isStale()) return
-
-      setRows(
-        (sums ?? []).map((s: EnvelopeSummary) => ({
-          envelopeId:       s.envelope_id,
-          envelopeBudgetId: s.envelope_budget_id,
-          name:             s.envelope_name,
-          color:            s.color,
-          isSavings:        s.is_savings,
-          projected:        s.projected_amount,
-          executed:         s.executed_amount,
-          available:        s.available_amount,
-          pct:              s.pct_executed,
-        }))
-      )
-    } else {
-      setRows([])
-    }
+    setPeriod(per)
+    setPrevPeriod(prevPer ? { id: prevPer.id, closedAt: prevPer.closed_at } : null)
+    setRows(prev => (orderingRef.current ? prev : nextRows))
+    setPeriodSummary(summary)
     setLoading(false)
   }, [periodDate])
 
@@ -209,6 +257,8 @@ export default function BolsillosPage() {
     setEditingRow(null)
     setEditingIncome(false)
     setAddingRow(false)
+    setEditingCategory(null)
+    setOrdering(false)
     setPageError(null)
     setPeriodDate(next)
   }
@@ -226,16 +276,12 @@ export default function BolsillosPage() {
     const { data: { user } } = await supabase.auth.getUser()
 
     // Find previous period
-    const prevDate = new Date(periodDate + 'T12:00:00')
-    prevDate.setMonth(prevDate.getMonth() - 1)
-    const prevDateStr = prevDate.toISOString().slice(0, 7) + '-01'
-
     const { data: prevPer } = await supabase
       .from('budget_periods')
       .select('id, projected_income')
       .eq('user_id', user!.id)
-      .eq('period_date', prevDateStr)
-      .single()
+      .eq('period_date', shiftPeriod(periodDate, -1))
+      .maybeSingle()
 
     if (!prevPer) { finish('info', 'No encontramos el presupuesto del mes anterior.'); return }
 
@@ -323,11 +369,17 @@ export default function BolsillosPage() {
     // Close only this row's editor: another row may already be open.
     setEditingRow(cur => (cur === row.envelopeId ? null : cur))
     // Show the new figures right away (same formulas as v_envelope_summary); the refresh replaces them.
-    setRows(prev => prev.map(r => (
-      r.envelopeId === row.envelopeId
-        ? { ...r, projected: amount, available: amount - r.executed, pct: amount > 0 ? (r.executed / amount) * 100 : 0 }
-        : r
-    )))
+    setRows(prev => prev.map(r => {
+      if (r.envelopeId !== row.envelopeId) return r
+      const spendable = amount + r.carryover
+      return {
+        ...r,
+        projected: amount,
+        spendable,
+        available: spendable - r.executed,
+        pct: spendable > 0 ? (r.executed / spendable) * 100 : 0,
+      }
+    }))
     setPageError(null)
     const supabase = createClient()
     const { error } = await supabase.from('envelope_budgets').update({ projected_amount: amount }).eq('id', row.envelopeBudgetId)
@@ -354,6 +406,58 @@ export default function BolsillosPage() {
       return
     }
     setRows(prev => prev.filter(r => r.envelopeId !== envelopeId))
+    loadData(true)
+  }
+
+  // ── Edit category ──────────────────────────────────────────────────────────
+  function openEditCategory(row: RowState) {
+    setEditingCategory({ id: row.envelopeId, name: row.name, color: row.color, isSavings: row.isSavings })
+  }
+
+  function handleCategorySaved(saved: EditableCategory) {
+    setEditingCategory(null)
+    setRows(prev => sortRows(prev.map(r => (
+      r.envelopeId === saved.id ? { ...r, name: saved.name, color: saved.color, isSavings: saved.isSavings } : r
+    ))))
+    loadData(true)
+  }
+
+  // ── Order mode ─────────────────────────────────────────────────────────────
+  function startOrdering() {
+    // An amount still open (a tap doesn't always blur the field on iOS): save it first.
+    const open = editingRowRef.current
+    const openRow = open ? rows.find(r => r.envelopeId === open) : undefined
+    if (openRow) saveProjected(openRow)
+    setPageError(null)
+    setOrdering(true)
+  }
+
+  function moveRow(index: number, direction: -1 | 1) {
+    setRows(prev => {
+      const target = index + direction
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+
+  async function finishOrdering() {
+    if (savingOrder) return
+    setSavingOrder(true)
+    setPageError(null)
+    const supabase = createClient()
+    const results = await Promise.all(
+      rows.map((r, i) => supabase.from('envelopes').update({ sort_order: i }).eq('id', r.envelopeId))
+    )
+    setSavingOrder(false)
+    if (results.some(r => r.error)) {
+      // Stay in order mode so "Listo" can be tapped again.
+      setPageError('No se pudo guardar el orden de las categorías. Intenta de nuevo.')
+      return
+    }
+    setRows(prev => prev.map((r, i) => ({ ...r, sortOrder: i })))
+    setOrdering(false)
     loadData(true)
   }
 
@@ -384,7 +488,14 @@ export default function BolsillosPage() {
 
     const { data: env, error: envError } = await supabase
       .from('envelopes')
-      .insert({ user_id: user.id, name, color: newColor, is_savings: newIsSavings })
+      .insert({
+        user_id: user.id,
+        name,
+        color: newColor,
+        is_savings: newIsSavings,
+        // New categories go to the end of the saved order.
+        sort_order: rows.length ? Math.max(...rows.map(r => r.sortOrder)) + 1 : 0,
+      })
       .select().single()
 
     if (envError || !env) {
@@ -410,18 +521,27 @@ export default function BolsillosPage() {
   }
 
   // ── Derived values ─────────────────────────────────────────────────────────
-  const income         = period?.projected_income ?? 0
-  const totalBudgeted  = rows.reduce((a, r) => a + r.projected, 0)
-  const totalExecuted  = rows.reduce((a, r) => a + r.executed, 0)
-  const totalAvailable = rows.reduce((a, r) => a + r.available, 0)
-  const unassigned     = income - totalBudgeted
-  // Same denominator as each row's "% gastado": spent ÷ budgeted.
-  const totalPct       = totalBudgeted > 0 ? (totalExecuted / totalBudgeted) * 100 : 0
-  const totalSpend     = spendOf(totalBudgeted, totalExecuted, totalPct)
-  const budgetedShare  = income > 0 ? formatPercent((totalBudgeted / income) * 100) : '0%'
-  const copyStatus     = copyResult?.period === periodDate ? copyResult : null
+  const income          = period?.projected_income ?? 0
+  const totalBudgeted   = rows.reduce((a, r) => a + r.projected, 0)
+  const totalCarryover  = rows.reduce((a, r) => a + r.carryover, 0)
+  const totalSpendable  = rows.reduce((a, r) => a + r.spendable, 0)
+  const totalExecuted   = rows.reduce((a, r) => a + r.executed, 0)
+  const totalAvailable  = rows.reduce((a, r) => a + r.available, 0)
+  // Overspending of the closed previous month comes out of this month's income.
+  const overspentCarry  = period?.overspent_carryover ?? 0
+  const unassigned      = income - totalBudgeted - overspentCarry
+  // Same denominator as each row's "% gastado": spent ÷ (budgeted + carry-over).
+  const totalPct        = totalSpendable > 0 ? (totalExecuted / totalSpendable) * 100 : 0
+  const totalSpend      = spendOf(totalSpendable, totalExecuted, totalPct)
+  const budgetedShare   = income > 0 ? formatPercent((totalBudgeted / income) * 100) : '0%'
+  const copyStatus      = copyResult?.period === periodDate ? copyResult : null
+  const prevDate        = shiftPeriod(periodDate, -1)
+  // A closed previous month already copied its budget (with the leftovers) into this one.
+  const copyAvailable   = prevPeriod !== null && !prevPeriod.closedAt && !period?.closed_at
+  // A past month that is still open: offer to go there and close it.
+  const prevOpenAndPast = prevPeriod !== null && !prevPeriod.closedAt && prevDate < getPeriodDate()
   // Copying is still worth offering until a copy of this month went through (or found nothing to add).
-  const canOfferCopy   = prevPeriodExists && (!copyStatus || copyStatus.tone === 'danger')
+  const canOfferCopy    = copyAvailable && (!copyStatus || copyStatus.tone === 'danger')
 
   /** "% del ingreso" of a budgeted amount, or null when it doesn't apply. */
   function incomeShare(amount: number): string | null {
@@ -430,6 +550,14 @@ export default function BolsillosPage() {
 
   /** Presupuestado figure: a button with an edit affordance, or the field while editing. */
   function renderProjected(row: RowState, layout: 'card' | 'table') {
+    // Order mode: amounts are not editable.
+    if (ordering) {
+      return (
+        <span className={cn('inline-flex items-center font-semibold text-fg', layout === 'card' ? 'min-h-10 text-sm' : 'min-h-9')}>
+          <Money value={row.projected} />
+        </span>
+      )
+    }
     if (editingRow === row.envelopeId) {
       return (
         <MoneyInput
@@ -473,6 +601,52 @@ export default function BolsillosPage() {
     )
   }
 
+  /** Edit + delete, or up/down in order mode. Edges use aria-disabled so keyboard focus stays on the button. */
+  function renderRowActions(row: RowState, index: number) {
+    if (ordering) {
+      const first = index === 0
+      const last = index === rows.length - 1
+      const edgeClass = 'aria-disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:hover:bg-transparent'
+      return (
+        <>
+          <IconButton
+            size="sm"
+            label={`Subir ${row.name}`}
+            aria-disabled={first || undefined}
+            onClick={() => { if (!first) moveRow(index, -1) }}
+            className={edgeClass}
+          >
+            <ChevronUp className="h-4 w-4" aria-hidden="true" />
+          </IconButton>
+          <IconButton
+            size="sm"
+            label={`Bajar ${row.name}`}
+            aria-disabled={last || undefined}
+            onClick={() => { if (!last) moveRow(index, 1) }}
+            className={edgeClass}
+          >
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          </IconButton>
+        </>
+      )
+    }
+    return (
+      <>
+        <IconButton size="sm" tone="primary" label={`Editar ${row.name}`} onClick={() => openEditCategory(row)}>
+          <Pencil className="h-4 w-4" aria-hidden="true" />
+        </IconButton>
+        <IconButton
+          size="sm"
+          tone="danger"
+          label={`Eliminar ${row.name}`}
+          onClick={() => deleteEnvelope(row.envelopeId, row.name)}
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </IconButton>
+      </>
+    )
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
@@ -513,12 +687,17 @@ export default function BolsillosPage() {
           </Alert>
         ) : (
           <>
+            {period.closed_at && <ClosedMonthAlert periodDate={periodDate} />}
+
             {/* ── Income card ───────────────────────────────────────────────── */}
             <section
               aria-label="Ingreso del mes"
               className="rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-800 p-5 text-white shadow-sm sm:p-6 dark:from-indigo-700 dark:to-indigo-900"
             >
-              <p className="text-sm font-medium text-white/80">Ingreso proyectado</p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-white/80">Ingreso proyectado</p>
+                {period.closed_at && <Badge variant="gray">Cerrado</Badge>}
+              </div>
 
               {editingIncome ? (
                 <form
@@ -598,11 +777,28 @@ export default function BolsillosPage() {
                   </p>
                   <BudgetStatusPill unassigned={unassigned} appearance="hero" />
                 </div>
+                {(totalCarryover > 0 || overspentCarry > 0) && (
+                  <p className="mt-2 text-xs text-white/80">
+                    {totalCarryover > 0 && (
+                      <>
+                        Traslado recibido{' '}
+                        <span className="font-semibold whitespace-nowrap text-white">+<Money value={totalCarryover} /></span>
+                      </>
+                    )}
+                    {totalCarryover > 0 && overspentCarry > 0 && ' · '}
+                    {overspentCarry > 0 && (
+                      <>
+                        Sobregasto del mes anterior{' '}
+                        <span className="font-semibold whitespace-nowrap text-white">−<Money value={overspentCarry} /></span>
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
             </section>
 
             {/* ── Copy from previous month ──────────────────────────────────── */}
-            {prevPeriodExists && !copyStatus?.dismissed && (copyStatus ? (
+            {copyAvailable && !copyStatus?.dismissed && (copyStatus ? (
               <Alert
                 tone={copyStatus.tone}
                 action={
@@ -630,28 +826,62 @@ export default function BolsillosPage() {
                 icon={Copy}
                 title={rows.length === 0 ? '¿Repetir el presupuesto del mes anterior?' : '¿Te faltan categorías del mes anterior?'}
                 action={
-                  <Button variant="soft" size="sm" loading={copyingPrev} onClick={copyFromPreviousMonth} className="w-full sm:w-auto">
-                    {copyingPrev ? 'Copiando…' : 'Copiar presupuesto'}
-                  </Button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    {prevOpenAndPast && (
+                      <Button variant="ghost" size="sm" onClick={() => changePeriod(prevDate)} className="w-full sm:w-auto">
+                        Ir a <span className="capitalize">{formatPeriodLabel(prevDate)}</span>
+                      </Button>
+                    )}
+                    <Button variant="soft" size="sm" loading={copyingPrev} onClick={copyFromPreviousMonth} className="w-full sm:w-auto">
+                      {copyingPrev ? 'Copiando…' : 'Copiar presupuesto'}
+                    </Button>
+                  </div>
                 }
               >
                 {rows.length === 0
                   ? 'Copia las categorías y montos del mes anterior. Los movimientos empiezan en cero.'
                   : 'Agrega las categorías del mes anterior que no tengas en este mes, con su monto. Las que ya tienes no cambian.'}
+                {prevOpenAndPast && (
+                  <>
+                    {' '}<span className="capitalize">{formatPeriodLabel(prevDate)}</span> sigue abierto: ciérralo para que
+                    sus sobrantes pasen a este mes.
+                  </>
+                )}
               </Alert>
             ))}
 
             {/* ── Categories ────────────────────────────────────────────────── */}
             <Card padding="none" className="overflow-hidden">
-              <div className="flex min-h-14 items-center justify-between gap-3 border-b border-border px-4 py-2">
+              <div className="flex min-h-14 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-2">
                 <h2 className="text-sm font-semibold text-fg">Categorías</h2>
                 {!addingRow && rows.length > 0 && (
-                  <Button variant="soft" size="sm" onClick={openAddRow}>
-                    <Plus className="h-4 w-4" aria-hidden="true" />
-                    Agregar categoría
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {rows.length > 1 && (ordering ? (
+                      <Button size="sm" loading={savingOrder} onClick={finishOrdering}>
+                        {!savingOrder && <Check className="h-4 w-4" aria-hidden="true" />}
+                        Listo
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" size="sm" onClick={startOrdering}>
+                        <ArrowUpDown className="h-4 w-4" aria-hidden="true" />
+                        Ordenar
+                      </Button>
+                    ))}
+                    {!ordering && (
+                      <Button variant="soft" size="sm" onClick={openAddRow}>
+                        <Plus className="h-4 w-4" aria-hidden="true" />
+                        Agregar<span className="max-sm:sr-only"> categoría</span>
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
+
+              {ordering && (
+                <p className="border-b border-border bg-surface-2 px-4 py-2 text-xs text-fg-subtle">
+                  Usa las flechas para cambiar el orden y toca «Listo» para guardarlo.
+                </p>
+              )}
 
               {/* ── Add new category ────────────────────────────────────── */}
               {addingRow && (
@@ -683,30 +913,7 @@ export default function BolsillosPage() {
                   </div>
 
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                    <fieldset className="min-w-0">
-                      <legend className="mb-1.5 text-sm font-medium text-fg-muted">Color</legend>
-                      <div className="flex flex-wrap gap-2">
-                        {COLORS.map(c => {
-                          const selected = newColor === c.value
-                          return (
-                            <button
-                              key={c.value}
-                              type="button"
-                              onClick={() => setNewColor(c.value)}
-                              aria-label={c.name}
-                              aria-pressed={selected}
-                              title={c.name}
-                              className={cn(
-                                'h-8 w-8 rounded-full transition-shadow',
-                                focusRing,
-                                selected && 'ring-2 ring-fg ring-offset-2 ring-offset-surface-2'
-                              )}
-                              style={{ backgroundColor: c.value }}
-                            />
-                          )
-                        })}
-                      </div>
-                    </fieldset>
+                    <ColorSwatches value={newColor} onChange={setNewColor} surface="surface-2" />
 
                     <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm text-fg-muted">
                       <input
@@ -752,8 +959,8 @@ export default function BolsillosPage() {
                 <>
                   {/* ── Phones: one card per category ── */}
                   <ul className="divide-y divide-border md:hidden">
-                    {rows.map(row => {
-                      const spend = spendOf(row.projected, row.executed, row.pct)
+                    {rows.map((row, index) => {
+                      const spend = spendOf(row.spendable, row.executed, row.pct)
                       const share = incomeShare(row.projected)
                       return (
                         <li key={row.envelopeId} className="px-4 py-3">
@@ -761,21 +968,16 @@ export default function BolsillosPage() {
                             <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: row.color }} aria-hidden="true" />
                             <p className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{row.name}</p>
                             {row.isSavings && <Badge variant="indigo">Ahorro</Badge>}
-                            <IconButton
-                              size="sm"
-                              tone="danger"
-                              label={`Eliminar ${row.name}`}
-                              onClick={() => deleteEnvelope(row.envelopeId, row.name)}
-                              className="-mr-2"
-                            >
-                              <Trash2 className="h-4 w-4" aria-hidden="true" />
-                            </IconButton>
+                            <div className="-mr-2 flex shrink-0 items-center">
+                              {renderRowActions(row, index)}
+                            </div>
                           </div>
 
                           <div className="mt-1 grid grid-cols-2 gap-3">
                             <div className="min-w-0">
                               <p className="text-xs text-fg-subtle">Presupuestado</p>
                               {renderProjected(row, 'card')}
+                              <CarryoverNote amount={row.carryover} />
                               {share && <p className="text-xs text-fg-subtle tabular-nums">{share} del ingreso</p>}
                             </div>
                             <div className="min-w-0 text-right">
@@ -805,9 +1007,12 @@ export default function BolsillosPage() {
                   <div className="border-t border-border bg-surface-2 px-4 py-3 md:hidden">
                     <p className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">Total del mes</p>
                     <dl className="mt-2 space-y-1.5 text-sm">
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-start justify-between gap-3">
                         <dt className="text-fg-muted">Presupuestado</dt>
-                        <dd className="font-semibold text-fg"><Money value={totalBudgeted} /></dd>
+                        <dd className="text-right font-semibold text-fg">
+                          <Money value={totalBudgeted} />
+                          <CarryoverNote amount={totalCarryover} className="font-normal" />
+                        </dd>
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <dt className="text-fg-muted">Gastado</dt>
@@ -840,8 +1045,8 @@ export default function BolsillosPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {rows.map(row => {
-                        const spend = spendOf(row.projected, row.executed, row.pct)
+                      {rows.map((row, index) => {
+                        const spend = spendOf(row.spendable, row.executed, row.pct)
                         const share = incomeShare(row.projected)
                         return (
                           <tr key={row.envelopeId} className="group transition-colors hover:bg-surface-2">
@@ -854,6 +1059,7 @@ export default function BolsillosPage() {
                             </td>
                             <td className="px-3 py-2 text-right">
                               {renderProjected(row, 'table')}
+                              <CarryoverNote amount={row.carryover} />
                               {share && <p className="text-xs text-fg-subtle tabular-nums xl:hidden">{share} del ingreso</p>}
                             </td>
                             <td className="hidden px-3 py-2.5 text-right text-fg-muted tabular-nums xl:table-cell">
@@ -874,15 +1080,14 @@ export default function BolsillosPage() {
                               </div>
                             </td>
                             <td className="py-2 pl-1 pr-3 text-right">
-                              <div className="transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100">
-                                <IconButton
-                                  size="sm"
-                                  tone="danger"
-                                  label={`Eliminar ${row.name}`}
-                                  onClick={() => deleteEnvelope(row.envelopeId, row.name)}
-                                >
-                                  <Trash2 className="h-4 w-4" aria-hidden="true" />
-                                </IconButton>
+                              <div
+                                className={cn(
+                                  'flex items-center justify-end gap-0.5',
+                                  // Edit/delete show on hover with a mouse; the order arrows are always visible.
+                                  !ordering && 'transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100'
+                                )}
+                              >
+                                {renderRowActions(row, index)}
                               </div>
                             </td>
                           </tr>
@@ -894,6 +1099,7 @@ export default function BolsillosPage() {
                         <th scope="row" className="py-3 pl-4 pr-3 text-left font-semibold text-fg-muted">Total</th>
                         <td className="px-3 py-3 text-right text-fg">
                           <Money value={totalBudgeted} />
+                          <CarryoverNote amount={totalCarryover} className="font-normal" />
                           {incomeShare(totalBudgeted) && (
                             <p className="text-xs font-normal text-fg-subtle tabular-nums xl:hidden">
                               {incomeShare(totalBudgeted)} del ingreso
@@ -942,10 +1148,33 @@ export default function BolsillosPage() {
                 </li>
               </ul>
             )}
+
+            {/* ── Month close ──────────────────────────────────────────────── */}
+            <MonthCloseCard
+              key={period.id}
+              period={period}
+              categories={rows.map(r => ({
+                id: r.envelopeId,
+                name: r.name,
+                color: r.color,
+                available: r.available,
+                pending: r.pending,
+              }))}
+              summary={periodSummary}
+              onChanged={() => loadData(true)}
+              onGoToMonth={changePeriod}
+            />
           </>
         )}
       </main>
 
+      {editingCategory && (
+        <EditCategoryModal
+          category={editingCategory}
+          onClose={() => setEditingCategory(null)}
+          onSaved={handleCategorySaved}
+        />
+      )}
       {confirmDialog}
     </>
   )

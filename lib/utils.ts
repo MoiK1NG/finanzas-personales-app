@@ -1,7 +1,8 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { addMonths, format, startOfMonth, endOfMonth } from 'date-fns'
 import { es } from 'date-fns/locale'
+import type { MovementEntry, RecurrenceFrequency, RecurringTemplate, Transaction } from '@/types/database'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -89,4 +90,83 @@ export function getPeriodRange(periodDate: string) {
     start: format(startOfMonth(date), 'yyyy-MM-dd'),
     end: format(endOfMonth(date), 'yyyy-MM-dd'),
   }
+}
+
+/** Moves a 'YYYY-MM-01' period by n months (no UTC shift, unlike toISOString()). */
+export function shiftPeriod(periodDate: string, months: number): string {
+  return format(addMonths(new Date(periodDate + 'T12:00:00'), months), 'yyyy-MM-01')
+}
+
+/** Today as 'YYYY-MM-DD' in the user's local time zone (never UTC). */
+export function todayISO(): string {
+  return format(new Date(), 'yyyy-MM-dd')
+}
+
+// ─── Transfers ────────────────────────────────────────────────────────────────
+
+export function isTransfer(tx: Pick<Transaction, 'type' | 'transfer_group_id'>): boolean {
+  return tx.type === 'transfer' && tx.transfer_group_id !== null
+}
+
+/**
+ * Collapses the two rows of each transfer into one entry, keeping the order in which
+ * each movement first appears. A transfer whose other half is not in the list keeps
+ * the missing side as null (the edit modal fetches it).
+ */
+export function groupTransfers<T extends Transaction>(txs: T[]): MovementEntry[] {
+  const entries: MovementEntry[] = []
+  const transfers = new Map<string, Extract<MovementEntry, { kind: 'transfer' }>>()
+  for (const tx of txs) {
+    if (isTransfer(tx)) {
+      const groupId = tx.transfer_group_id as string
+      let entry = transfers.get(groupId)
+      if (!entry) {
+        entry = { kind: 'transfer', id: groupId, out: null, in: null }
+        transfers.set(groupId, entry)
+        entries.push(entry)
+      }
+      if (tx.transfer_direction === 'in') entry.in = tx
+      else entry.out = tx
+    } else {
+      entries.push({ kind: 'transaction', id: tx.id, tx })
+    }
+  }
+  return entries
+}
+
+/** Any row of the entry, for the fields both sides share (amount, date, description, is_executed). */
+export function entryRow(entry: MovementEntry): Transaction {
+  if (entry.kind === 'transaction') return entry.tx
+  return (entry.out ?? entry.in) as Transaction
+}
+
+/** Projected (not yet executed) entries wait for the user to confirm them. */
+export function isPending(entry: MovementEntry): boolean {
+  return !entryRow(entry).is_executed
+}
+
+export function transferLabel(from?: string | null, to?: string | null): string {
+  return `${from ?? 'Cuenta'} → ${to ?? 'Cuenta'}`
+}
+
+// ─── Recurring ────────────────────────────────────────────────────────────────
+
+export const FREQUENCY_LABELS: Record<RecurrenceFrequency, string> = {
+  monthly: 'Mensual',
+  biweekly: 'Cada 2 semanas',
+  weekly: 'Semanal',
+  yearly: 'Anual',
+}
+
+export const FREQUENCY_OPTIONS = (Object.keys(FREQUENCY_LABELS) as RecurrenceFrequency[]).map(value => ({
+  value,
+  label: FREQUENCY_LABELS[value],
+}))
+
+/** "Mensual · día 5", "Semanal · desde 3 de oct", "Anual · 15 de mar". */
+export function formatRecurrence(t: Pick<RecurringTemplate, 'frequency' | 'day_of_month' | 'start_date'>): string {
+  const label = FREQUENCY_LABELS[t.frequency]
+  if (t.frequency === 'monthly') return `${label} · día ${t.day_of_month ?? Number(t.start_date.slice(8, 10))}`
+  if (t.frequency === 'yearly') return `${label} · ${formatDate(t.start_date)}`
+  return `${label} · desde ${formatDate(t.start_date)}`
 }

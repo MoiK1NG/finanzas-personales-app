@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { cn, focusRing, formatPeriodLabel } from '@/lib/utils'
+import { cn, focusRing, formatPeriodLabel, groupTransfers } from '@/lib/utils'
+import { ensureRecurringOccurrences } from '@/lib/recurring'
+import { getReconciliation, setOpeningBalance } from '@/lib/monthClose'
 import { usePeriod } from '@/hooks/usePeriod'
 import Header from '@/components/layout/Header'
 import PageHeader from '@/components/ui/PageHeader'
@@ -23,11 +25,13 @@ import PeriodSetupModal from '@/components/dashboard/PeriodSetupModal'
 import AccountsWidget from '@/components/dashboard/AccountsWidget'
 import BudgetTable from '@/components/dashboard/BudgetTable'
 import QuickAddForm from '@/components/transactions/QuickAddForm'
+import ClosedMonthAlert from '@/components/budget/ClosedMonthAlert'
 import type {
   BudgetPeriod,
   Envelope,
-  Transaction,
   EnvelopeSummary,
+  MovementEntry,
+  PeriodReconciliation,
   PeriodSummary,
   Profile,
   BankAccount,
@@ -63,7 +67,11 @@ export default function DashboardPage() {
   const [envelopeSummary, setEnvelopeSummary] = useState<EnvelopeSummary[]>([])
   const [periodSummary, setPeriodSummary] = useState<PeriodSummary | null>(null)
   const [accounts, setAccounts] = useState<BankAccount[]>([])
-  const [recentTx, setRecentTx] = useState<(Transaction & { envelope?: Envelope | null })[]>([])
+  const [entries, setEntries] = useState<MovementEntry[]>([])
+  const [pendingCount, setPendingCount] = useState(0)
+  const [reconciliation, setReconciliation] = useState<PeriodReconciliation | null>(null)
+  const [settingOpening, setSettingOpening] = useState(false)
+  const [openingError, setOpeningError] = useState<string | null>(null)
   const [showSetup, setShowSetup] = useState(false)
   const [loading, setLoading] = useState(true)
   // Month whose data is on screen. The loader replaces the content only on the first load and
@@ -108,30 +116,62 @@ export default function DashboardPage() {
       return
     }
 
-    // Envelopes, summaries, recent tx in parallel
+    // Projected occurrences of recurring movements for this month (idempotent, never blocks the load)
+    await ensureRecurringOccurrences(supabase, per.id)
+    if (isStale()) return
+
+    // Envelopes, summaries, recent movements and the reconciliation in parallel
     const [
       { data: envs },
       { data: envSum },
       { data: perSum },
       { data: txs },
+      { count: pending },
+      { data: rec },
     ] = await Promise.all([
       supabase.from('envelopes').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
       supabase.from('v_envelope_summary').select('*').eq('budget_period_id', per.id).eq('user_id', user.id),
       supabase.from('v_period_summary').select('*').eq('budget_period_id', per.id).eq('user_id', user.id).single(),
+      // 16 rows: the two halves of a transfer collapse into one entry, and 8 entries are shown.
       supabase.from('transactions').select('*, envelope:envelopes(*)').eq('budget_period_id', per.id)
-        .order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(8),
+        .order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(16),
+      // A projected transfer is two rows: count it once, by its 'out' side.
+      supabase.from('transactions').select('id', { count: 'exact', head: true })
+        .eq('budget_period_id', per.id).eq('is_executed', false)
+        .or('type.neq.transfer,transfer_direction.eq.out'),
+      getReconciliation(supabase, per.id),
     ])
     if (isStale()) return
 
     setEnvelopes(envs ?? [])
-    setEnvelopeSummary(envSum ?? [])
+    // The view does not order its rows: saved order, then name (same as Presupuesto).
+    setEnvelopeSummary(
+      [...((envSum ?? []) as EnvelopeSummary[])].sort(
+        (a, b) => a.sort_order - b.sort_order || a.envelope_name.localeCompare(b.envelope_name, 'es')
+      )
+    )
     setPeriodSummary(perSum)
-    setRecentTx(txs ?? [])
+    setEntries(groupTransfers(txs ?? []).slice(0, 8))
+    setPendingCount(pending ?? 0)
+    setReconciliation(rec)
     setLoadedPeriod(periodDate)
     setLoading(false)
   }, [periodDate])
 
   useEffect(() => { loadData() }, [loadData])
+
+  async function handleSetOpeningBalance() {
+    if (!period || settingOpening) return
+    setSettingOpening(true)
+    setOpeningError(null)
+    const { error } = await setOpeningBalance(createClient(), period.id)
+    setSettingOpening(false)
+    if (error) {
+      setOpeningError('No se pudo fijar el saldo de apertura. Intenta de nuevo.')
+      return
+    }
+    loadData()
+  }
 
   const ps = periodSummary
   const totalBankBalance = accounts.reduce((sum, a) => sum + a.balance, 0)
@@ -209,6 +249,8 @@ export default function DashboardPage() {
           )
         ) : (
           <>
+            {period.closed_at && <ClosedMonthAlert periodDate={periodDate} />}
+
             {/* Summary: what I have, then how the month is going */}
             <section aria-labelledby="inicio-resumen" className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
               <h2 id="inicio-resumen" className="sr-only">Resumen del mes</h2>
@@ -309,6 +351,7 @@ export default function DashboardPage() {
                         <BudgetTable
                           summaries={envelopeSummary}
                           projectedIncome={projectedIncome}
+                          unassigned={ps?.unassigned_amount ?? projectedIncome - totalBudgeted}
                           budgetPeriodId={period.id}
                           onRefresh={loadData}
                         />
@@ -323,18 +366,25 @@ export default function DashboardPage() {
                 <h2 id="inicio-cuentas" className="sr-only">Cuentas y movimientos</h2>
                 <AccountsWidget accounts={accounts} totalBalance={totalBankBalance} />
                 <RecentTransactions
-                  transactions={recentTx}
+                  entries={entries}
+                  pendingCount={pendingCount}
                   envelopes={envelopes}
                   bankAccounts={accounts}
                   onRefresh={loadData}
                 />
-                {ps && (
-                  <BalanceDiscrepancy
-                    realBankBalance={totalBankBalance}
-                    realIncomeReceived={ps.real_income_received}
-                    realExpensesPaid={ps.real_expenses_paid}
-                  />
+                {openingError && (
+                  <Alert
+                    tone="danger"
+                    action={<Button variant="ghost" size="sm" onClick={() => setOpeningError(null)}>Cerrar</Button>}
+                  >
+                    {openingError}
+                  </Alert>
                 )}
+                <BalanceDiscrepancy
+                  reconciliation={reconciliation}
+                  onSetOpeningBalance={handleSetOpeningBalance}
+                  settingOpeningBalance={settingOpening}
+                />
               </section>
             </div>
           </>

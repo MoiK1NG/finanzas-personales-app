@@ -30,6 +30,11 @@ export default function PeriodSetupModal({
   const [projectedIncome, setProjectedIncome] = useState(
     period?.projected_income != null ? formatMoneyInput(period.projected_income) : ''
   )
+  // Seed of the opening balance field, so an untouched field is not written back (rounding).
+  const [initialOpening] = useState(
+    period?.opening_balance != null ? formatMoneyInput(period.opening_balance, true) : ''
+  )
+  const [openingBalance, setOpeningBalance] = useState(initialOpening)
   const [notes, setNotes] = useState(period?.notes ?? '')
   const [loading, setLoading] = useState(false)
   const [incomeError, setIncomeError] = useState<string | null>(null)
@@ -46,9 +51,17 @@ export default function PeriodSetupModal({
     const supabase = createClient()
 
     if (period) {
+      const update: { projected_income: number; notes: string | null; opening_balance?: number | null } = {
+        projected_income: income,
+        notes: notes || null,
+      }
+      if (openingBalance !== initialOpening) {
+        // Empty (or a lone minus sign) leaves it unset.
+        update.opening_balance = /\d/.test(openingBalance) ? parseMoneyInput(openingBalance) : null
+      }
       const { error: err } = await supabase
         .from('budget_periods')
-        .update({ projected_income: income, notes: notes || null })
+        .update(update)
         .eq('id', period.id)
       if (err) { setError('No se pudieron guardar los cambios. Intenta de nuevo.'); setLoading(false); return }
     } else {
@@ -93,6 +106,17 @@ export default function PeriodSetupModal({
           error={incomeError ?? undefined}
           autoFocus
         />
+
+        {period && (
+          <MoneyInput
+            label="Saldo de apertura"
+            value={openingBalance}
+            onValueChange={setOpeningBalance}
+            allowNegative
+            placeholder="Sin fijar"
+            hint="Lo que tenías en tus cuentas al empezar el mes."
+          />
+        )}
 
         <Input
           label="Notas (opcional)"

@@ -29,7 +29,8 @@ export default function BottomNav() {
     >
       <div className="flex h-16 items-stretch">
         {navItems.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href
+          // Sub-pages (e.g. /transacciones/recurrentes) keep their section highlighted.
+          const active = pathname === href || (href !== '/' && pathname.startsWith(href + '/'))
           return (
             <Link
               key={href}

@@ -1,49 +1,69 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { cn, focusRing, formatCOP, formatDate, formatPeriodLabel } from '@/lib/utils'
+import {
+  cn, entryRow, focusRing, formatCOP, formatPeriodLabel, groupTransfers, isPending, transferLabel,
+} from '@/lib/utils'
+import { deleteTransfer } from '@/lib/transfers'
+import { confirmTransaction, ensureRecurringOccurrences } from '@/lib/recurring'
 import { usePeriod } from '@/hooks/usePeriod'
 import { useConfirm } from '@/hooks/useConfirm'
 import Header from '@/components/layout/Header'
 import QuickAddForm from '@/components/transactions/QuickAddForm'
 import EditTransactionModal from '@/components/transactions/EditTransactionModal'
+import MovementRow, { entryDescription } from '@/components/transactions/MovementRow'
+import ClosedMonthAlert from '@/components/budget/ClosedMonthAlert'
 import { Card } from '@/components/ui/Card'
-import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
-import IconButton from '@/components/ui/IconButton'
 import Money from '@/components/ui/Money'
 import PageHeader from '@/components/ui/PageHeader'
 import SegmentedControl from '@/components/ui/SegmentedControl'
 import EmptyState from '@/components/ui/EmptyState'
 import Alert from '@/components/ui/Alert'
 import Spinner, { LoadingState } from '@/components/ui/Spinner'
-import type { Envelope, BudgetPeriod, Transaction, BankAccount } from '@/types/database'
-import { ArrowUpRight, ArrowDownLeft, Repeat, Trash2, ArrowLeftRight, Plus, Pencil } from 'lucide-react'
+import type { Envelope, BudgetPeriod, Transaction, BankAccount, MovementEntry } from '@/types/database'
+import { ArrowLeftRight, Plus, Repeat } from 'lucide-react'
 
 type TxWithEnvelope = Transaction & { envelope?: Envelope | null }
-type Filter = 'all' | 'income' | 'expense'
+type Filter = 'all' | 'income' | 'expense' | 'transfer'
 
 /** PostgREST code for `.single()` with no rows: the month simply has no budget period yet. */
 const NO_ROWS = 'PGRST116'
 
-const FILTER_OPTIONS: { value: Filter; label: string }[] = [
+const FILTER_OPTIONS: { value: Filter; label: ReactNode }[] = [
   { value: 'all', label: 'Todos' },
   { value: 'income', label: 'Ingresos' },
   { value: 'expense', label: 'Gastos' },
+  {
+    value: 'transfer',
+    label: (
+      <>
+        <span aria-hidden="true" className="sm:hidden">Transf.</span>
+        <span className="sr-only sm:not-sr-only">Transferencias</span>
+      </>
+    ),
+  },
 ]
 
 const EMPTY_COPY: Record<Filter, { title: string; description: string }> = {
-  all:     { title: 'No hay movimientos este mes', description: 'Registra tu primer ingreso o gasto del mes.' },
-  income:  { title: 'No hay ingresos este mes',    description: 'Los ingresos que registres aparecerán aquí.' },
-  expense: { title: 'No hay gastos este mes',      description: 'Los gastos que registres aparecerán aquí.' },
+  all:      { title: 'No hay movimientos este mes',     description: 'Registra tu primer ingreso o gasto del mes.' },
+  income:   { title: 'No hay ingresos este mes',        description: 'Los ingresos que registres aparecerán aquí.' },
+  expense:  { title: 'No hay gastos este mes',          description: 'Los gastos que registres aparecerán aquí.' },
+  transfer: { title: 'No hay transferencias este mes',  description: 'Lo que muevas entre tus cuentas aparecerá aquí.' },
 }
 
 const linkButtonClass = cn(
   'inline-flex h-9 items-center justify-center rounded-lg border border-border-strong bg-surface px-3 text-sm font-medium text-fg whitespace-nowrap transition-colors hover:bg-surface-2',
   focusRing
 )
+
+function matchesFilter(entry: MovementEntry, filter: Filter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'transfer') return entry.kind === 'transfer'
+  return entry.kind === 'transaction' && entry.tx.type === filter
+}
 
 export default function TransaccionesPage() {
   const [periodDate, setPeriodDate]   = usePeriod()
@@ -56,14 +76,16 @@ export default function TransaccionesPage() {
   const [loadedPeriod, setLoadedPeriod] = useState<string | null>(null)
   const [loadError, setLoadError]     = useState<'session' | 'network' | null>(null)
   const [filterType, setFilterType]   = useState<Filter>('all')
+  const [pendingOnly, setPendingOnly] = useState(false)
   const [showQuickAdd, setShowQuickAdd] = useState(false)
-  const [editingTx, setEditingTx]     = useState<Transaction | null>(null)
-  const [deletingId, setDeletingId]   = useState<string | null>(null)
-  const [notice, setNotice]           = useState<{ tone: 'danger' | 'warning'; message: string } | null>(null)
+  const [editing, setEditing]         = useState<{ tx: Transaction; counterpart?: Transaction } | null>(null)
+  /** Entry whose delete/confirm is running; every row waits meanwhile. */
+  const [busy, setBusy]               = useState<{ id: string; kind: 'deleting' | 'confirming' } | null>(null)
+  const [notice, setNotice]           = useState<string | null>(null)
   const noticeRef                     = useRef<HTMLDivElement>(null)
   const { confirm, confirmDialog }    = useConfirm()
 
-  // The notice renders above the list; bring it into view when a delete deep in the list fails.
+  // The notice renders above the list; bring it into view when an action deep in the list fails.
   useEffect(() => {
     if (!notice) return
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -91,6 +113,8 @@ export default function TransaccionesPage() {
     let failed = Boolean((perErr && perErr.code !== NO_ROWS) || envsErr || acctsErr)
 
     if (per) {
+      // Creates this month's projected recurring movements (idempotent; a failure doesn't block the list).
+      await ensureRecurringOccurrences(supabase, per.id)
       const { data: txs, error: txsErr } = await supabase
         .from('transactions')
         .select('*, envelope:envelopes(*)')
@@ -110,88 +134,98 @@ export default function TransaccionesPage() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const accountName = (id: string | null) =>
-    id ? bankAccounts.find(a => a.id === id)?.name : undefined
+  const accountNames = new Map(bankAccounts.map(a => [a.id, a.name]))
+  const entries = groupTransfers(transactions)
 
-  async function handleDelete(id: string) {
-    const tx = transactions.find(t => t.id === id)
-    const affectsBalance = Boolean(tx?.is_executed && tx.bank_account_id)
-    const acctLabel = accountName(tx?.bank_account_id ?? null) ?? 'la cuenta'
-    const balanceLine = !tx || !affectsBalance
-      ? ''
-      : tx.type === 'income'
-        ? ` Se restarán ${formatCOP(tx.amount)} del saldo de ${acctLabel}.`
-        : ` Se devolverán ${formatCOP(tx.amount)} al saldo de ${acctLabel}.`
+  function openEdit(entry: MovementEntry) {
+    if (entry.kind === 'transaction') {
+      setEditing({ tx: entry.tx })
+      return
+    }
+    const tx = (entry.out ?? entry.in) as Transaction
+    // Only pass the other row when both are here; otherwise the modal fetches it.
+    const counterpart = entry.out && entry.in ? entry.in : undefined
+    setEditing({ tx, counterpart })
+  }
 
-    const ok = await confirm({
-      title: '¿Eliminar este movimiento?',
-      description: tx
-        ? `“${tx.description}” se eliminará.${balanceLine} Esta acción no se puede deshacer.`
-        : 'Esta acción no se puede deshacer.',
-      confirmLabel: 'Eliminar',
-      tone: 'danger',
-    })
+  async function handleConfirm(entry: MovementEntry) {
+    // For a transfer, confirming one row confirms the other too (database trigger).
+    const row = entry.kind === 'transfer' ? (entry.out ?? entry.in) as Transaction : entry.tx
+    setNotice(null)
+    setBusy({ id: entry.id, kind: 'confirming' })
+    const { error } = await confirmTransaction(createClient(), row.id)
+    setBusy(null)
+    if (error) setNotice(`No se pudo confirmar «${entryDescription(entry, accountNames)}». Intenta de nuevo.`)
+    loadData()
+  }
+
+  async function handleDelete(entry: MovementEntry) {
+    const row = entryRow(entry)
+    const description = entryDescription(entry, accountNames)
+    const omit = !row.is_executed && row.recurring_template_id !== null
+
+    const ok = await confirm(
+      omit
+        ? {
+            title: `¿Omitir «${description}» este mes?`,
+            description: 'Se quitará solo esta vez. La recurrencia sigue activa.',
+            confirmLabel: 'Omitir',
+            tone: 'primary',
+          }
+        : entry.kind === 'transfer'
+          ? {
+              title: '¿Eliminar esta transferencia?',
+              description: `${transferLabel(
+                entry.out?.bank_account_id ? accountNames.get(entry.out.bank_account_id) : undefined,
+                entry.in?.bank_account_id ? accountNames.get(entry.in.bank_account_id) : undefined
+              )} por ${formatCOP(row.amount)} se eliminará. Esta acción no se puede deshacer.`,
+              confirmLabel: 'Eliminar',
+              tone: 'danger',
+            }
+          : {
+              title: '¿Eliminar este movimiento?',
+              description: `«${description}» se eliminará. Esta acción no se puede deshacer.`,
+              confirmLabel: 'Eliminar',
+              tone: 'danger',
+            }
+    )
     if (!ok) return
 
     setNotice(null)
-    setDeletingId(id)
+    setBusy({ id: entry.id, kind: 'deleting' })
     const supabase = createClient()
-    let balanceAdjusted = false
-    let balanceFailed = false
-    if (tx?.is_executed && tx.bank_account_id) {
-      const delta = tx.type === 'income' ? -tx.amount : tx.amount
-      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', tx.bank_account_id).single()
-      if (acct) {
-        const { error: balanceErr } = await supabase.from('bank_accounts').update({ balance: acct.balance + delta }).eq('id', tx.bank_account_id)
-        if (balanceErr) balanceFailed = true
-        else balanceAdjusted = true
-      } else {
-        balanceFailed = true
-      }
-    }
-    const { error: deleteErr } = await supabase.from('transactions').delete().eq('id', id)
-    setDeletingId(null)
+    // Balances are adjusted by the database; deleting a transfer removes both rows.
+    const { error } = entry.kind === 'transfer'
+      ? await deleteTransfer(supabase, entry.id)
+      : await supabase.from('transactions').delete().eq('id', entry.id)
+    setBusy(null)
 
-    const name = tx ? `“${tx.description}”` : 'el movimiento'
-    if (deleteErr) {
-      setNotice({
-        tone: 'danger',
-        message: balanceAdjusted
-          ? `No se pudo eliminar ${name}, pero el saldo de ${acctLabel} ya se ajustó. Revisa ese saldo en Cuentas antes de intentar de nuevo.`
-          : `No se pudo eliminar ${name}. Intenta de nuevo.`,
-      })
-    } else if (balanceFailed) {
-      setNotice({
-        tone: 'warning',
-        message: `Se eliminó ${name}, pero no se pudo actualizar el saldo de ${acctLabel}. Revísalo en Cuentas.`,
-      })
+    if (error) {
+      setNotice(omit
+        ? `No se pudo omitir «${description}». Intenta de nuevo.`
+        : `No se pudo eliminar «${description}». Intenta de nuevo.`)
     }
     loadData()
   }
 
-  const filtered = transactions.filter(tx =>
-    filterType === 'all' || tx.type === filterType
+  const pendingCount = entries.filter(isPending).length
+  // The chip hides at 0, so the filter can't stay on with no way to turn it off.
+  const showPendingOnly = pendingOnly && pendingCount > 0
+  const filtered = entries.filter(entry =>
+    matchesFilter(entry, filterType) && (!showPendingOnly || isPending(entry))
   )
 
+  // Transfers move money between accounts: they are neither income nor expense.
   const totalIncome  = transactions.filter(t => t.type === 'income'  && t.is_executed).reduce((a, t) => a + t.amount, 0)
   const totalExpense = transactions.filter(t => t.type === 'expense' && t.is_executed).reduce((a, t) => a + t.amount, 0)
   const balance      = totalIncome - totalExpense
-  const projectedCount = transactions.filter(t => !t.is_executed).length
+  const projectedCount = transactions.filter(t => t.type !== 'transfer' && !t.is_executed).length
 
   const showLoader = loading && loadedPeriod !== periodDate
   const refreshing = loading && !showLoader
   const canAdd     = !showLoader && !loadError && period !== null
-  // While a delete runs or the list reloads after a change, the rows on screen may be stale.
-  // Edit and delete compute balance deltas from the row they were opened from, so they wait.
-  const rowsLocked = refreshing || deletingId !== null
-
-  function rowMeta(tx: TxWithEnvelope) {
-    return [
-      tx.envelope?.name ?? (tx.type === 'income' ? null : 'Sin categoría'),
-      accountName(tx.bank_account_id),
-      formatDate(tx.transaction_date),
-    ].filter(Boolean).join(' · ')
-  }
+  // While a delete/confirm runs or the list reloads after a change, the rows on screen may be stale.
+  const rowsLocked = refreshing || busy !== null
 
   const addButton = (className?: string) => (
     <Button className={className} onClick={() => setShowQuickAdd(true)}>
@@ -199,6 +233,24 @@ export default function TransaccionesPage() {
       Nuevo movimiento
     </Button>
   )
+
+  const recurringLink = (className?: string) => (
+    <Link
+      href="/transacciones/recurrentes"
+      className={cn(
+        'inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors',
+        focusRing,
+        className
+      )}
+    >
+      <Repeat className="h-4 w-4" aria-hidden="true" />
+      Recurrentes
+    </Link>
+  )
+
+  const emptyCopy = showPendingOnly
+    ? { title: 'Nada por confirmar con este filtro', description: 'Prueba con otro tipo o quita el filtro «por confirmar».' }
+    : EMPTY_COPY[filterType]
 
   return (
     <>
@@ -216,26 +268,31 @@ export default function TransaccionesPage() {
           subtitle={
             canAdd ? (
               <span className="inline-flex items-center gap-2">
-                {transactions.length === 1 ? '1 movimiento' : `${transactions.length} movimientos`}
+                {entries.length === 1 ? '1 movimiento' : `${entries.length} movimientos`}
                 {refreshing && <Spinner size="sm" label="Actualizando" className="text-fg-faint" />}
               </span>
             ) : undefined
           }
-          actions={canAdd ? addButton('hidden lg:inline-flex') : undefined}
+          actions={
+            <>
+              {recurringLink('hidden h-10 border border-border-strong bg-surface px-4 text-fg hover:bg-surface-2 lg:inline-flex')}
+              {canAdd && addButton('hidden lg:inline-flex')}
+            </>
+          }
         />
 
         {notice && (
           // scroll-mt clears the sticky header when scrolled into view
           <div ref={noticeRef} className="scroll-mt-20">
             <Alert
-              tone={notice.tone}
+              tone="danger"
               action={
                 <Button size="sm" variant="ghost" onClick={() => setNotice(null)}>
                   Cerrar
                 </Button>
               }
             >
-              {notice.message}
+              {notice}
             </Alert>
           </div>
         )}
@@ -274,6 +331,8 @@ export default function TransaccionesPage() {
           </Alert>
         ) : (
           <>
+            {period.closed_at && <ClosedMonthAlert periodDate={periodDate} />}
+
             {/* Summary: Balance first and full width on phones */}
             <section aria-label="Resumen del mes" className="space-y-2">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
@@ -303,95 +362,62 @@ export default function TransaccionesPage() {
             </section>
 
             <section aria-label="Lista de movimientos" className="space-y-3">
-              <SegmentedControl
-                label="Filtrar por tipo"
-                options={FILTER_OPTIONS}
-                value={filterType}
-                onChange={setFilterType}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <SegmentedControl
+                  label="Filtrar por tipo"
+                  options={FILTER_OPTIONS}
+                  value={filterType}
+                  onChange={setFilterType}
+                />
+                {pendingCount > 0 && (
+                  <button
+                    type="button"
+                    aria-pressed={showPendingOnly}
+                    onClick={() => setPendingOnly(!showPendingOnly)}
+                    className={cn(
+                      'inline-flex h-10 items-center rounded-full border px-3.5 text-sm font-medium whitespace-nowrap transition-colors',
+                      focusRing,
+                      showPendingOnly
+                        ? 'border-info/30 bg-info-soft text-info'
+                        : 'border-border-strong bg-surface text-fg-muted hover:bg-surface-2 hover:text-fg'
+                    )}
+                  >
+                    {pendingCount} por confirmar
+                  </button>
+                )}
+                {recurringLink('ml-auto h-10 px-2 text-accent hover:bg-primary-soft lg:hidden')}
+              </div>
 
               <Card padding="none">
                 {filtered.length === 0 ? (
                   <EmptyState
                     icon={ArrowLeftRight}
-                    title={EMPTY_COPY[filterType].title}
-                    description={EMPTY_COPY[filterType].description}
-                    action={addButton()}
+                    title={emptyCopy.title}
+                    description={emptyCopy.description}
+                    action={
+                      showPendingOnly ? (
+                        <Button variant="secondary" onClick={() => setPendingOnly(false)}>
+                          Ver todos
+                        </Button>
+                      ) : (
+                        addButton()
+                      )
+                    }
                   />
                 ) : (
                   <ul className="divide-y divide-border" aria-busy={rowsLocked || undefined}>
-                    {filtered.map(tx => {
-                      const isIncome = tx.type === 'income'
-                      const deleting = deletingId === tx.id
-                      return (
-                        <li
-                          key={tx.id}
-                          className="group flex items-center gap-1 pr-2 transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-surface-2 active:bg-surface-2 sm:pr-3"
-                        >
-                          {/* The whole row opens the edit form. aria-disabled (not disabled) keeps keyboard focus in place. */}
-                          <button
-                            type="button"
-                            onClick={() => { if (!rowsLocked) setEditingTx(tx) }}
-                            aria-disabled={rowsLocked || undefined}
-                            className={cn(
-                              'flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-lg py-3 pl-4 pr-2 text-left',
-                              focusRing,
-                              'focus-visible:-outline-offset-2'
-                            )}
-                          >
-                            <span className="sr-only">Editar movimiento: </span>
-                            <span
-                              aria-hidden="true"
-                              className={cn(
-                                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
-                                isIncome ? 'bg-income-soft text-income' : 'bg-expense-soft text-expense'
-                              )}
-                            >
-                              {isIncome
-                                ? <ArrowUpRight className="h-4 w-4" />
-                                : <ArrowDownLeft className="h-4 w-4" />}
-                            </span>
-
-                            <span className="min-w-0 flex-1">
-                              <span className="flex min-w-0 items-center gap-1.5">
-                                <span className="truncate text-sm font-medium text-fg">{tx.description}</span>
-                                {tx.is_recurring && (
-                                  <span title="Recurrente" className="shrink-0 text-fg-subtle">
-                                    <Repeat className="h-3.5 w-3.5" aria-hidden="true" />
-                                    <span className="sr-only">, recurrente</span>
-                                  </span>
-                                )}
-                              </span>
-                              <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
-                                {!tx.is_executed && <Badge variant="blue" className="shrink-0">Proyectado</Badge>}
-                                <span className="truncate text-xs text-fg-subtle">{rowMeta(tx)}</span>
-                              </span>
-                            </span>
-
-                            <Money
-                              value={tx.amount}
-                              variant={isIncome ? 'income' : 'expense'}
-                              className="shrink-0 text-sm font-semibold"
-                            />
-                            <Pencil className="hidden h-4 w-4 shrink-0 text-fg-faint sm:block" aria-hidden="true" />
-                          </button>
-
-                          <IconButton
-                            size="sm"
-                            tone="danger"
-                            label={`Eliminar ${tx.description}`}
-                            onClick={() => { if (!rowsLocked) handleDelete(tx.id) }}
-                            disabled={deleting}
-                            aria-disabled={(!deleting && rowsLocked) || undefined}
-                            className="transition pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100"
-                          >
-                            {deleting
-                              ? <Spinner size="sm" label="Eliminando" />
-                              : <Trash2 className="h-4 w-4" aria-hidden="true" />}
-                          </IconButton>
-                        </li>
-                      )
-                    })}
+                    {filtered.map(entry => (
+                      <MovementRow
+                        key={entry.id}
+                        entry={entry}
+                        accountNames={accountNames}
+                        onEdit={() => openEdit(entry)}
+                        onDelete={() => handleDelete(entry)}
+                        onConfirm={() => handleConfirm(entry)}
+                        busy={busy?.id === entry.id ? busy.kind : null}
+                        locked={rowsLocked}
+                      />
+                    ))}
                   </ul>
                 )}
               </Card>
@@ -427,13 +453,14 @@ export default function TransaccionesPage() {
         />
       )}
 
-      {editingTx && (
+      {editing && (
         <EditTransactionModal
-          transaction={editingTx}
+          transaction={editing.tx}
+          counterpart={editing.counterpart}
           envelopes={envelopes}
           bankAccounts={bankAccounts}
           onSuccess={loadData}
-          onClose={() => setEditingTx(null)}
+          onClose={() => setEditing(null)}
           periodDate={period?.period_date}
         />
       )}

@@ -10,9 +10,12 @@ import Alert from '@/components/ui/Alert'
 import Badge from '@/components/ui/Badge'
 import PageHeader from '@/components/ui/PageHeader'
 import { LoadingState } from '@/components/ui/Spinner'
+import InstallAppCard from '@/components/settings/InstallAppCard'
 import { useSignOut } from '@/hooks/useSignOut'
+import { cn, focusRing } from '@/lib/utils'
 import type { Profile } from '@/types/database'
-import { Coins, Lock, LogOut, RefreshCw, User } from 'lucide-react'
+import Link from 'next/link'
+import { Coins, Lock, LogOut, RefreshCw, Repeat, User } from 'lucide-react'
 
 const LOAD_ERROR = 'No pudimos cargar tu perfil. Revisa tu conexión e intenta de nuevo.'
 
@@ -193,6 +196,30 @@ export default function ConfiguracionPage() {
               <Badge variant="gray">Fija</Badge>
             </div>
           </Card>
+
+          {/* Recurrentes */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Repeat className="h-4 w-4" aria-hidden="true" />
+                Recurrentes
+              </CardTitle>
+            </CardHeader>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-fg-muted">Ingresos, gastos y transferencias que se repiten cada mes.</p>
+              <Link
+                href="/transacciones/recurrentes"
+                className={cn(
+                  'inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-4 text-sm font-medium text-fg transition-colors hover:bg-surface-2 sm:h-10 sm:w-auto',
+                  focusRing
+                )}
+              >
+                Administrar
+              </Link>
+            </div>
+          </Card>
+
+          <InstallAppCard />
 
           {/* Sesión — the only way to sign out on phones */}
           <Card>

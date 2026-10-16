@@ -1,16 +1,26 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { updateTransfer } from '@/lib/transfers'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import Alert from '@/components/ui/Alert'
-import { formatMoneyInput, parseMoneyInput } from '@/lib/utils'
+import { LoadingState } from '@/components/ui/Spinner'
+import { formatMoneyInput, isTransfer, parseMoneyInput } from '@/lib/utils'
 import type { Envelope, Transaction, BankAccount } from '@/types/database'
-import TransactionFormFields, { useTransactionForm } from './TransactionFormFields'
+import TransactionFormFields, {
+  DEFAULT_TRANSFER_DESCRIPTION, useTransactionForm, type TransactionFormValues,
+} from './TransactionFormFields'
+import { RecurringOccurrenceNote } from './RecurringFields'
 
 interface EditTransactionModalProps {
   transaction: Transaction
+  /**
+   * The other row of a transfer, when the caller already has it. If the edited row is a
+   * transfer and this is missing, the modal fetches it.
+   */
+  counterpart?: Transaction
   envelopes: Envelope[]
   bankAccounts: BankAccount[]
   onSuccess: () => void
@@ -19,29 +29,88 @@ interface EditTransactionModalProps {
   periodDate?: string
 }
 
+function initialValues(transaction: Transaction, counterpart: Transaction | null): TransactionFormValues {
+  const base = {
+    amount: formatMoneyInput(transaction.amount),
+    description: transaction.description,
+    transaction_date: transaction.transaction_date,
+    is_executed: transaction.is_executed,
+    recurring: false,
+    frequency: 'monthly' as const,
+    end_date: '',
+  }
+
+  if (transaction.type === 'transfer') {
+    const out = transaction.transfer_direction === 'out' ? transaction : counterpart
+    const into = transaction.transfer_direction === 'in' ? transaction : counterpart
+    return {
+      ...base,
+      type: 'transfer',
+      // The default description is not shown, so the optional field starts empty.
+      description: transaction.description === DEFAULT_TRANSFER_DESCRIPTION ? '' : transaction.description,
+      envelope_id: '',
+      bank_account_id: out?.bank_account_id ?? '',
+      to_bank_account_id: into?.bank_account_id ?? '',
+    }
+  }
+
+  return {
+    ...base,
+    type: transaction.type,
+    envelope_id: transaction.envelope_id ?? '',
+    bank_account_id: transaction.bank_account_id ?? '',
+    to_bank_account_id: '',
+  }
+}
+
+type CounterpartState =
+  | { status: 'ready'; tx: Transaction | null }
+  | { status: 'loading' }
+  | { status: 'error' }
+
 export default function EditTransactionModal({
   transaction,
+  counterpart,
   envelopes,
   bankAccounts,
   onSuccess,
   onClose,
   periodDate,
 }: EditTransactionModalProps) {
-  const { values, validate, fieldProps } = useTransactionForm(() => ({
-    type: transaction.type === 'transfer' ? 'expense' : transaction.type,
-    amount: formatMoneyInput(transaction.amount),
-    description: transaction.description,
-    envelope_id: transaction.envelope_id ?? '',
-    bank_account_id: transaction.bank_account_id ?? '',
-    transaction_date: transaction.transaction_date,
-    is_executed: transaction.is_executed,
-  }))
+  const transfer = isTransfer(transaction)
+  const needsCounterpart = transfer && !counterpart
+  const [sibling, setSibling] = useState<CounterpartState>(() =>
+    needsCounterpart ? { status: 'loading' } : { status: 'ready', tx: counterpart ?? null }
+  )
+
+  const { values, validate, reset, fieldProps } = useTransactionForm(() =>
+    initialValues(transaction, counterpart ?? null)
+  )
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
-  /** Set when the change was saved but an account balance could not be updated. */
-  const [balanceNotice, setBalanceNotice] = useState<string | null>(null)
 
-  const accountName = (id: string | null) => bankAccounts.find(a => a.id === id)?.name ?? 'la cuenta'
+  // A transfer opened without its other row (e.g. only one side was in the list): fetch it
+  // before showing the form, since the accounts come from both rows.
+  useEffect(() => {
+    if (!needsCounterpart) return
+    let cancelled = false
+    createClient()
+      .from('transactions')
+      .select('*')
+      .eq('transfer_group_id', transaction.transfer_group_id)
+      .neq('id', transaction.id)
+      .single<Transaction>()
+      .then(({ data, error: fetchErr }) => {
+        if (cancelled) return
+        if (fetchErr || !data) {
+          setSibling({ status: 'error' })
+          return
+        }
+        reset(initialValues(transaction, data))
+        setSibling({ status: 'ready', tx: data })
+      })
+    return () => { cancelled = true }
+  }, [needsCounterpart, transaction, reset])
 
   function finish() {
     onSuccess()
@@ -50,82 +119,41 @@ export default function EditTransactionModal({
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (balanceNotice) { finish(); return }
+    if (sibling.status !== 'ready') return
     setError(null)
 
     if (!validate()) return
-    const {
-      type,
-      description,
-      envelope_id: envelopeId,
-      bank_account_id: bankAccountId,
-      transaction_date: date,
-      is_executed: isExecuted,
-    } = values
-    const amt = parseMoneyInput(values.amount)
+    const amount = parseMoneyInput(values.amount)
 
     setLoading(true)
     const supabase = createClient()
 
-    let reversed = false
-    /** Accounts whose balance read or write failed (old and new account can both fail). */
-    const failedAccountIds = new Set<string>()
-
-    // Reverse old balance effect
-    if (transaction.is_executed && transaction.bank_account_id) {
-      const reverseDelta = transaction.type === 'income' ? -transaction.amount : transaction.amount
-      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', transaction.bank_account_id).single()
-      if (acct) {
-        const { error: reverseErr } = await supabase.from('bank_accounts').update({ balance: acct.balance + reverseDelta }).eq('id', transaction.bank_account_id)
-        if (reverseErr) failedAccountIds.add(transaction.bank_account_id)
-        else reversed = true
-      } else {
-        failedAccountIds.add(transaction.bank_account_id)
-      }
-    }
-
-    const { error: err } = await supabase
-      .from('transactions')
-      .update({
-        type,
-        amount: amt,
-        description: description.trim(),
-        envelope_id: envelopeId || null,
-        bank_account_id: bankAccountId || null,
-        transaction_date: date,
-        is_executed: isExecuted,
-      })
-      .eq('id', transaction.id)
-
-    // Apply new balance effect
-    if (!err && isExecuted && bankAccountId) {
-      const delta = type === 'income' ? amt : -amt
-      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', bankAccountId).single()
-      if (acct) {
-        const { error: applyErr } = await supabase.from('bank_accounts').update({ balance: acct.balance + delta }).eq('id', bankAccountId)
-        if (applyErr) failedAccountIds.add(bankAccountId)
-      } else {
-        failedAccountIds.add(bankAccountId)
-      }
-    }
+    // The database moves the account balances (trigger); a transfer's other row follows.
+    const { error: err } = transfer
+      ? await updateTransfer(supabase, transaction.transfer_group_id as string, {
+          fromAccountId: values.bank_account_id,
+          toAccountId: values.to_bank_account_id,
+          amount,
+          description: values.description.trim() || DEFAULT_TRANSFER_DESCRIPTION,
+          date: values.transaction_date,
+          isExecuted: values.is_executed,
+        })
+      : await supabase
+          .from('transactions')
+          .update({
+            type: values.type,
+            amount,
+            description: values.description.trim(),
+            envelope_id: values.envelope_id || null,
+            bank_account_id: values.bank_account_id || null,
+            transaction_date: values.transaction_date,
+            is_executed: values.is_executed,
+          })
+          .eq('id', transaction.id)
 
     setLoading(false)
     if (err) {
-      setError(
-        reversed
-          ? `No se pudo guardar el cambio, pero el saldo de ${accountName(transaction.bank_account_id)} ya se ajustó. Revisa ese saldo en Cuentas antes de intentar de nuevo.`
-          : 'No se pudo guardar el cambio. Intenta de nuevo.'
-      )
-      return
-    }
-
-    if (failedAccountIds.size > 0) {
-      const names = [...failedAccountIds].map(accountName)
-      setBalanceNotice(
-        names.length > 1
-          ? `No se pudieron actualizar los saldos de ${names.join(' y ')}. Revísalos en Cuentas.`
-          : `No se pudo actualizar el saldo de ${names[0]}. Revísalo en Cuentas.`
-      )
+      setError('No se pudo guardar el cambio. Intenta de nuevo.')
       return
     }
 
@@ -134,28 +162,31 @@ export default function EditTransactionModal({
 
   return (
     <Modal
-      title="Editar movimiento"
-      onClose={balanceNotice ? finish : onClose}
+      title={transfer ? 'Editar transferencia' : 'Editar movimiento'}
+      onClose={onClose}
       onSubmit={handleSubmit}
       footer={
-        balanceNotice ? (
-          <Button type="submit" className="flex-1 sm:flex-none" autoFocus>
-            Entendido
+        <>
+          <Button type="button" variant="secondary" className="flex-1 sm:flex-none" onClick={onClose} disabled={loading}>
+            Cancelar
           </Button>
-        ) : (
-          <>
-            <Button type="button" variant="secondary" className="flex-1 sm:flex-none" onClick={onClose} disabled={loading}>
-              Cancelar
-            </Button>
-            <Button type="submit" loading={loading} className="flex-1 sm:flex-none">
-              Guardar cambios
-            </Button>
-          </>
-        )
+          <Button
+            type="submit"
+            loading={loading}
+            disabled={sibling.status !== 'ready'}
+            className="flex-1 sm:flex-none"
+          >
+            Guardar cambios
+          </Button>
+        </>
       }
     >
-      {balanceNotice ? (
-        <Alert tone="warning" title="El cambio se guardó">{balanceNotice}</Alert>
+      {sibling.status === 'loading' ? (
+        <LoadingState label="Cargando transferencia" />
+      ) : sibling.status === 'error' ? (
+        <Alert tone="danger" title="No se pudo cargar la transferencia">
+          Cierra y vuelve a intentarlo.
+        </Alert>
       ) : (
         <div className="space-y-4">
           <TransactionFormFields
@@ -163,7 +194,11 @@ export default function EditTransactionModal({
             envelopes={envelopes}
             bankAccounts={bankAccounts}
             periodDate={periodDate}
+            mode="edit"
           />
+          {transaction.recurring_template_id && (
+            <RecurringOccurrenceNote templateId={transaction.recurring_template_id} />
+          )}
           {error && <Alert tone="danger">{error}</Alert>}
         </div>
       )}

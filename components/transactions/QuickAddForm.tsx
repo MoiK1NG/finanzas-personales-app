@@ -1,15 +1,18 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { format } from 'date-fns'
 import { Plus } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { createTransfer } from '@/lib/transfers'
+import { confirmTransaction, createTemplate, ensureRecurringOccurrences, resyncTemplate } from '@/lib/recurring'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import Alert from '@/components/ui/Alert'
-import { getPeriodRange, parseMoneyInput } from '@/lib/utils'
+import { getPeriodRange, parseMoneyInput, todayISO } from '@/lib/utils'
 import type { Envelope, BudgetPeriod, BankAccount } from '@/types/database'
-import TransactionFormFields, { useTransactionForm, type TransactionFormValues } from './TransactionFormFields'
+import TransactionFormFields, {
+  DEFAULT_TRANSFER_DESCRIPTION, useTransactionForm, type TransactionFormValues,
+} from './TransactionFormFields'
 
 interface QuickAddFormProps {
   envelopes: Envelope[]
@@ -29,7 +32,7 @@ interface QuickAddFormProps {
 
 /** Today's local date, kept inside the month being viewed (the movement is filed under it). */
 function defaultDate(periodDate: string): string {
-  const today = format(new Date(), 'yyyy-MM-dd')
+  const today = todayISO()
   const { start, end } = getPeriodRange(periodDate)
   if (today < start) return start
   if (today > end) return end
@@ -43,8 +46,12 @@ function initialValues(budgetPeriod: BudgetPeriod): TransactionFormValues {
     description: '',
     envelope_id: '',
     bank_account_id: '',
+    to_bank_account_id: '',
     transaction_date: defaultDate(budgetPeriod.period_date),
     is_executed: true,
+    recurring: false,
+    frequency: 'monthly',
+    end_date: '',
   }
 }
 
@@ -95,16 +102,21 @@ function QuickAddDialog({
   const { values, validate, fieldProps } = useTransactionForm(() => initialValues(budgetPeriod))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  /** Set when the movement was saved but its account balance could not be updated. */
-  const [balanceNotice, setBalanceNotice] = useState<string | null>(null)
+  /**
+   * Set when a recurrence was created but this month's occurrence could not be marked as
+   * executed. Saving again would create a second recurrence, so the form only offers to close.
+   */
+  const [savedNotice, setSavedNotice] = useState<string | null>(null)
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (balanceNotice) { onSaved(); return }
+    if (savedNotice) { onSaved(); return }
     setError(null)
 
     if (!validate()) return
     const amount = parseMoneyInput(values.amount)
+    const isTransferType = values.type === 'transfer'
+    const description = values.description.trim() || (isTransferType ? DEFAULT_TRANSFER_DESCRIPTION : '')
 
     setLoading(true)
     const supabase = createClient()
@@ -115,36 +127,82 @@ function QuickAddDialog({
       return
     }
 
-    const { error: err } = await supabase.from('transactions').insert({
-      user_id: user.id,
-      budget_period_id: budgetPeriod.id,
-      envelope_id: values.envelope_id || null,
-      bank_account_id: values.bank_account_id || null,
-      type: values.type,
-      amount,
-      description: values.description.trim(),
-      transaction_date: values.transaction_date,
-      is_executed: values.is_executed,
-    })
-
-    let balanceFailed = false
-    if (!err && values.is_executed && values.bank_account_id) {
-      const delta = values.type === 'income' ? amount : -amount
-      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', values.bank_account_id).single()
-      if (acct) {
-        const { error: balanceErr } = await supabase.from('bank_accounts').update({ balance: acct.balance + delta }).eq('id', values.bank_account_id)
-        if (balanceErr) balanceFailed = true
-      } else {
-        balanceFailed = true
+    // Recurring: the template generates this month's occurrence as Proyectado. Inserting the
+    // movement here too would duplicate it, so "Ya ejecutado" confirms that occurrence instead.
+    if (values.recurring) {
+      const { data: template, error: templateErr } = await createTemplate(supabase, user.id, {
+        type: values.type,
+        amount,
+        description,
+        envelopeId: values.envelope_id || null,
+        bankAccountId: values.bank_account_id || null,
+        toBankAccountId: isTransferType ? values.to_bank_account_id : null,
+        frequency: values.frequency,
+        startDate: values.transaction_date,
+        endDate: values.end_date || null,
+      })
+      if (templateErr || !template) {
+        setLoading(false)
+        setError('No se pudo crear la recurrencia. Intenta de nuevo.')
+        return
       }
+
+      // Generates this month and later existing months. If it fails, generating just this
+      // month is enough: later months generate their occurrences when they are opened.
+      const { error: syncErr } = await resyncTemplate(supabase, template.id, budgetPeriod.period_date)
+      if (syncErr) await ensureRecurringOccurrences(supabase, budgetPeriod.id)
+
+      if (values.is_executed) {
+        let query = supabase
+          .from('transactions')
+          .select('id')
+          .eq('recurring_template_id', template.id)
+          .eq('budget_period_id', budgetPeriod.id)
+          .eq('recurrence_date', values.transaction_date)
+        if (isTransferType) query = query.eq('transfer_direction', 'out')
+        const { data: occurrence } = await query.maybeSingle<{ id: string }>()
+        const confirmed = occurrence ? !(await confirmTransaction(supabase, occurrence.id)).error : false
+        if (!confirmed) {
+          setLoading(false)
+          setSavedNotice(
+            'No se pudo marcar como ejecutado el movimiento de este mes, así que quedó como Proyectado. ' +
+            'Confírmalo desde Movimientos.'
+          )
+          return
+        }
+      }
+
+      setLoading(false)
+      onSaved()
+      return
     }
 
-    setLoading(false)
-    if (err) { setError('No se pudo guardar el movimiento. Intenta de nuevo.'); return }
+    const { error: err } = isTransferType
+      ? await createTransfer(supabase, budgetPeriod.id, {
+          fromAccountId: values.bank_account_id,
+          toAccountId: values.to_bank_account_id,
+          amount,
+          description,
+          date: values.transaction_date,
+          isExecuted: values.is_executed,
+        })
+      : await supabase.from('transactions').insert({
+          user_id: user.id,
+          budget_period_id: budgetPeriod.id,
+          envelope_id: values.envelope_id || null,
+          bank_account_id: values.bank_account_id || null,
+          type: values.type,
+          amount,
+          description,
+          transaction_date: values.transaction_date,
+          is_executed: values.is_executed,
+        })
 
-    if (balanceFailed) {
-      const name = bankAccounts.find(a => a.id === values.bank_account_id)?.name ?? 'la cuenta'
-      setBalanceNotice(`No se pudo actualizar el saldo de ${name}. Revísalo en Cuentas.`)
+    setLoading(false)
+    if (err) {
+      setError(isTransferType
+        ? 'No se pudo guardar la transferencia. Intenta de nuevo.'
+        : 'No se pudo guardar el movimiento. Intenta de nuevo.')
       return
     }
 
@@ -153,11 +211,11 @@ function QuickAddDialog({
 
   return (
     <Modal
-      title="Nuevo movimiento"
-      onClose={balanceNotice ? onSaved : onClose}
+      title={values.type === 'transfer' ? 'Nueva transferencia' : 'Nuevo movimiento'}
+      onClose={savedNotice ? onSaved : onClose}
       onSubmit={handleSubmit}
       footer={
-        balanceNotice ? (
+        savedNotice ? (
           <Button type="submit" className="flex-1 sm:flex-none" autoFocus>
             Entendido
           </Button>
@@ -173,8 +231,8 @@ function QuickAddDialog({
         )
       }
     >
-      {balanceNotice ? (
-        <Alert tone="warning" title="El movimiento se guardó">{balanceNotice}</Alert>
+      {savedNotice ? (
+        <Alert tone="warning" title="La recurrencia se guardó">{savedNotice}</Alert>
       ) : (
         <div className="space-y-4">
           <TransactionFormFields
@@ -182,6 +240,7 @@ function QuickAddDialog({
             envelopes={envelopes}
             bankAccounts={bankAccounts}
             periodDate={budgetPeriod.period_date}
+            mode="add"
             autoFocusAmount
           />
           {error && <Alert tone="danger">{error}</Alert>}

@@ -23,9 +23,10 @@ interface EnvelopeProgressCardProps {
 }
 
 export default function EnvelopeProgressCard({ envelope, className }: EnvelopeProgressCardProps) {
-  const isOver = envelope.executed_amount > envelope.projected_amount
-  // The view reports 0% when there is no budget, so spending without a budget needs its own label.
-  const spentWithoutBudget = envelope.projected_amount === 0 && envelope.executed_amount > 0
+  // Against what can be spent this month: budgeted + carry-over from last month.
+  const isOver = envelope.executed_amount > envelope.spendable_amount
+  // The view reports 0% when there is nothing to spend, so spending without a budget needs its own label.
+  const spentWithoutBudget = envelope.spendable_amount <= 0 && envelope.executed_amount > 0
   const tone = getSpendTone(envelope.pct_executed, isOver)
   const Icon = envelope.is_savings ? PiggyBank : Wallet
 
@@ -45,10 +46,17 @@ export default function EnvelopeProgressCard({ envelope, className }: EnvelopePr
             <p className="truncate text-sm font-semibold text-fg">{envelope.envelope_name}</p>
             {envelope.is_savings && <Badge variant="indigo">Ahorro</Badge>}
           </div>
-          <p className="mt-0.5 text-xs text-fg-subtle tabular-nums">
-            <span className="sr-only">Gastado </span>
-            {formatCOP(envelope.executed_amount)} de {formatCOP(envelope.projected_amount)}
-          </p>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <p className="text-xs text-fg-subtle tabular-nums">
+              <span className="sr-only">Gastado </span>
+              {formatCOP(envelope.executed_amount)} de {formatCOP(envelope.spendable_amount)}
+            </p>
+            {envelope.carryover_amount > 0 && (
+              <Badge variant="green">
+                +<Money value={envelope.carryover_amount} /> traslado
+              </Badge>
+            )}
+          </div>
         </div>
 
         <div className="shrink-0 text-right">

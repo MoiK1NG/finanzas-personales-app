@@ -7,6 +7,12 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: 'FinanzasApp — Control de presupuesto',
   description: 'Gestión financiera personal con Presupuesto Base Cero',
+  applicationName: 'FinanzasApp',
+  appleWebApp: {
+    capable: true,
+    title: 'FinanzasApp',
+    statusBarStyle: 'default',
+  },
 }
 
 export const viewport: Viewport = {
