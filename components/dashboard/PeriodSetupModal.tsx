@@ -1,11 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
+import Link from 'next/link'
+import { Info } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
-import { formatPeriodLabel } from '@/lib/utils'
-import { X } from 'lucide-react'
+import MoneyInput from '@/components/ui/MoneyInput'
+import Alert from '@/components/ui/Alert'
+import { cn, focusRing, formatMoneyInput, formatPeriodLabel, parseMoneyInput } from '@/lib/utils'
 import type { BudgetPeriod } from '@/types/database'
 
 interface PeriodSetupModalProps {
@@ -24,27 +28,42 @@ export default function PeriodSetupModal({
   onClose,
 }: PeriodSetupModalProps) {
   const [projectedIncome, setProjectedIncome] = useState(
-    period?.projected_income?.toString() ?? ''
+    period?.projected_income != null ? formatMoneyInput(period.projected_income) : ''
   )
+  // Seed of the opening balance field, so an untouched field is not written back (rounding).
+  const [initialOpening] = useState(
+    period?.opening_balance != null ? formatMoneyInput(period.opening_balance, true) : ''
+  )
+  const [openingBalance, setOpeningBalance] = useState(initialOpening)
   const [notes, setNotes] = useState(period?.notes ?? '')
   const [loading, setLoading] = useState(false)
+  const [incomeError, setIncomeError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError(null)
-    const income = parseFloat(projectedIncome.replace(/\./g, '').replace(',', '.'))
-    if (!income || income <= 0) { setError('Ingresa un ingreso proyectado válido'); return }
+    setIncomeError(null)
+    const income = parseMoneyInput(projectedIncome)
+    if (!income || income <= 0) { setIncomeError('Ingresa un ingreso proyectado válido'); return }
 
     setLoading(true)
     const supabase = createClient()
 
     if (period) {
+      const update: { projected_income: number; notes: string | null; opening_balance?: number | null } = {
+        projected_income: income,
+        notes: notes || null,
+      }
+      if (openingBalance !== initialOpening) {
+        // Empty (or a lone minus sign) leaves it unset.
+        update.opening_balance = /\d/.test(openingBalance) ? parseMoneyInput(openingBalance) : null
+      }
       const { error: err } = await supabase
         .from('budget_periods')
-        .update({ projected_income: income, notes: notes || null })
+        .update(update)
         .eq('id', period.id)
-      if (err) { setError('Error al actualizar'); setLoading(false); return }
+      if (err) { setError('No se pudieron guardar los cambios. Intenta de nuevo.'); setLoading(false); return }
     } else {
       const { error: err } = await supabase.from('budget_periods').insert({
         user_id: userId,
@@ -52,7 +71,7 @@ export default function PeriodSetupModal({
         projected_income: income,
         notes: notes || null,
       })
-      if (err) { setError('Error al crear el período'); setLoading(false); return }
+      if (err) { setError('No se pudo configurar el mes. Intenta de nuevo.'); setLoading(false); return }
     }
 
     setLoading(false)
@@ -61,56 +80,67 @@ export default function PeriodSetupModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <div>
-            <h2 className="text-base font-semibold text-gray-800">
-              {period ? 'Actualizar período' : 'Configurar período'}
-            </h2>
-            <p className="text-sm text-gray-500 capitalize">{formatPeriodLabel(periodDate)}</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+    <Modal
+      title={period ? 'Editar mes' : 'Configurar mes'}
+      description={<span className="capitalize">{formatPeriodLabel(periodDate)}</span>}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="secondary" className="flex-1 sm:flex-none" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button type="submit" loading={loading} className="flex-1 sm:flex-none">
+            {period ? 'Guardar cambios' : 'Configurar mes'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <MoneyInput
+          label="Ingreso proyectado del mes"
+          size="lg"
+          value={projectedIncome}
+          onValueChange={value => { setProjectedIncome(value); setIncomeError(null) }}
+          hint="Lo que esperas recibir este mes (sueldo, freelance, etc.)"
+          error={incomeError ?? undefined}
+          autoFocus
+        />
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <Input
-            label="Ingreso proyectado del mes (COP)"
-            prefix="$"
-            type="number"
-            placeholder="0"
-            value={projectedIncome}
-            onChange={e => setProjectedIncome(e.target.value)}
-            min="0"
-            step="1"
+        {period && (
+          <MoneyInput
+            label="Saldo de apertura"
+            value={openingBalance}
+            onValueChange={setOpeningBalance}
+            allowNegative
+            placeholder="Sin fijar"
+            hint="Lo que tenías en tus cuentas al empezar el mes."
           />
-          <p className="text-xs text-gray-500 -mt-2">
-            Lo que esperas recibir este mes (sueldo, freelance, etc.)
-          </p>
+        )}
 
-          <Input
-            label="Notas (opcional)"
-            placeholder="Mes especial, aguinaldo..."
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-          />
+        <Input
+          label="Notas (opcional)"
+          placeholder="Mes especial, prima…"
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+        />
 
-          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
-            💡 El saldo real ahora se calcula automáticamente sumando tus cuentas bancarias en <strong>Cuentas</strong>.
-          </div>
+        <p className="flex gap-2 text-xs text-fg-subtle">
+          <Info className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
+          <span>
+            Tu saldo en cuentas es la suma de tus cuentas. Lo actualizas en{' '}
+            <Link
+              href="/cuentas"
+              className={cn('rounded-sm font-medium text-accent underline underline-offset-2', focusRing)}
+            >
+              Cuentas
+            </Link>
+            .
+          </span>
+        </p>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <div className="flex gap-3 pt-1">
-            <Button type="submit" loading={loading} className="flex-1">
-              {period ? 'Actualizar' : 'Crear período'}
-            </Button>
-            <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
-          </div>
-        </form>
+        {error && <Alert tone="danger">{error}</Alert>}
       </div>
-    </div>
+    </Modal>
   )
 }

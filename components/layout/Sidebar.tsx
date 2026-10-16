@@ -12,12 +12,12 @@ import {
   LogOut,
   Landmark,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
+import { cn, focusRing } from '@/lib/utils'
+import { useSignOut } from '@/hooks/useSignOut'
+import Spinner from '@/components/ui/Spinner'
 
 const navItems = [
-  { href: '/',              label: 'Dashboard',    icon: LayoutDashboard },
+  { href: '/',              label: 'Inicio',       icon: LayoutDashboard },
   { href: '/cuentas',       label: 'Cuentas',      icon: Landmark },
   { href: '/bolsillos',     label: 'Presupuesto',  icon: Wallet },
   { href: '/transacciones', label: 'Movimientos',  icon: ArrowLeftRight },
@@ -27,40 +27,37 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const router = useRouter()
-
-  async function handleLogout() {
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
+  const { signOut, signingOut, signOutError } = useSignOut()
 
   return (
-    <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-60 bg-gray-900 flex-col z-50">
+    <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-60 bg-sidebar border-r border-sidebar-border flex-col z-50">
       {/* Logo */}
-      <div className="px-6 py-5 border-b border-gray-800">
-        <div className="flex items-center gap-2">
-          <TrendingUp className="h-6 w-6 text-indigo-400" />
-          <span className="text-white font-bold text-base tracking-tight">FinanzasApp</span>
-        </div>
+      <div className="px-6 py-5 border-b border-sidebar-border">
+        <Link href="/" className={cn('flex items-center gap-2 rounded-lg', focusRing)}>
+          <TrendingUp className="h-6 w-6 text-indigo-400" aria-hidden="true" />
+          <span className="text-sidebar-fg font-bold text-base tracking-tight">FinanzasApp</span>
+        </Link>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+      <nav aria-label="Principal" className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
         {navItems.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href
+          // Sub-pages (e.g. /transacciones/recurrentes) keep their section highlighted.
+          const active = pathname === href || (href !== '/' && pathname.startsWith(href + '/'))
           return (
             <Link
               key={href}
               href={href}
+              aria-current={active ? 'page' : undefined}
               className={cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                focusRing,
                 active
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                  ? 'bg-primary text-primary-fg'
+                  : 'text-sidebar-fg-muted hover:bg-sidebar-hover hover:text-sidebar-fg'
               )}
             >
-              <Icon className="h-4 w-4 flex-shrink-0" />
+              <Icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
               {label}
             </Link>
           )
@@ -68,12 +65,20 @@ export default function Sidebar() {
       </nav>
 
       {/* Logout */}
-      <div className="px-3 py-4 border-t border-gray-800">
+      <div className="px-3 py-4 border-t border-sidebar-border">
+        {signOutError && (
+          <p role="alert" className="px-3 pb-2 text-xs text-red-300">{signOutError}</p>
+        )}
         <button
-          onClick={handleLogout}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:bg-gray-800 hover:text-white transition-colors w-full"
+          type="button"
+          onClick={signOut}
+          disabled={signingOut}
+          className={cn(
+            'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-sidebar-fg-muted hover:bg-sidebar-hover hover:text-sidebar-fg transition-colors w-full disabled:opacity-60',
+            focusRing
+          )}
         >
-          <LogOut className="h-4 w-4" />
+          {signingOut ? <Spinner size="sm" label="Cerrando sesión" /> : <LogOut className="h-4 w-4" aria-hidden="true" />}
           Cerrar sesión
         </button>
       </div>

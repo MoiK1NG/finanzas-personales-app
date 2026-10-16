@@ -3,12 +3,12 @@ import BottomNav from '@/components/layout/BottomNav'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-canvas">
       {/* Desktop sidebar */}
       <Sidebar />
 
-      {/* Main content — shifts right on desktop, full-width on mobile */}
-      <div className="lg:ml-60 pb-16 lg:pb-0">
+      {/* Main content — shifts right on desktop, clears the bottom nav (+ iPhone safe area) on mobile */}
+      <div className="lg:ml-60 pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0">
         {children}
       </div>
 

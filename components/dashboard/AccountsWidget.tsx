@@ -1,17 +1,32 @@
 'use client'
 
+import type { CSSProperties } from 'react'
 import Link from 'next/link'
-import { formatCOP } from '@/lib/utils'
-import { cn } from '@/lib/utils'
-import type { BankAccount } from '@/types/database'
 import { Landmark, Smartphone, Banknote, ChevronRight } from 'lucide-react'
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
+import EmptyState from '@/components/ui/EmptyState'
+import Money from '@/components/ui/Money'
+import { cn, focusRing } from '@/lib/utils'
+import type { BankAccount } from '@/types/database'
 
 const TYPE_ICON = {
   checking: Landmark,
   savings:  Landmark,
   digital:  Smartphone,
   cash:     Banknote,
+}
+
+const sectionLinkClass = cn(
+  '-my-2 -mr-2 inline-flex min-h-10 items-center gap-0.5 rounded-lg px-2 text-sm font-medium text-accent transition-colors hover:bg-primary-soft',
+  focusRing
+)
+
+/** Tint derived from the account color so it reads on light and dark surfaces. */
+function tintStyle(color: string): CSSProperties {
+  return {
+    backgroundColor: `color-mix(in oklch, ${color} 16%, var(--surface))`,
+    color: `color-mix(in oklch, ${color} 75%, var(--fg))`,
+  }
 }
 
 interface AccountsWidgetProps {
@@ -24,53 +39,55 @@ export default function AccountsWidget({ accounts, totalBalance }: AccountsWidge
     <Card>
       <CardHeader>
         <CardTitle>Mis cuentas</CardTitle>
-        <Link href="/cuentas" className="text-xs text-indigo-600 hover:underline flex items-center gap-0.5">
-          Ver todas <ChevronRight className="h-3 w-3" />
+        <Link href="/cuentas" className={sectionLinkClass}>
+          Ver todas <ChevronRight className="h-4 w-4" aria-hidden="true" />
         </Link>
       </CardHeader>
 
       {accounts.length === 0 ? (
-        <div className="text-center py-4">
-          <p className="text-sm text-gray-400">Sin cuentas registradas</p>
-          <Link href="/cuentas" className="text-xs text-indigo-600 hover:underline mt-1 block">
-            Agregar cuenta →
-          </Link>
-        </div>
+        <EmptyState
+          icon={Landmark}
+          title="Sin cuentas registradas"
+          description="Registra tus cuentas para saber cuánto dinero tienes."
+          className="py-4"
+          action={
+            <Link
+              href="/cuentas"
+              className={cn(
+                'inline-flex h-9 items-center justify-center rounded-lg bg-primary-soft px-3 text-sm font-medium text-accent transition-colors hover:bg-primary-soft/70',
+                focusRing
+              )}
+            >
+              Agregar cuenta
+            </Link>
+          }
+        />
       ) : (
         <>
-          <div className="space-y-2 mb-3">
+          <ul className="space-y-1">
             {accounts.map(acc => {
               const Icon = TYPE_ICON[acc.account_type] ?? Landmark
               return (
-                <div key={acc.id} className="flex items-center justify-between py-1.5">
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className="h-7 w-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                      style={{ backgroundColor: acc.color + '20' }}
+                <li key={acc.id} className="flex items-center justify-between gap-3 py-1.5 text-fg">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span
+                      aria-hidden="true"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                      style={tintStyle(acc.color)}
                     >
-                      <Icon className="h-3.5 w-3.5" style={{ color: acc.color }} />
-                    </div>
-                    <span className="text-sm text-gray-700 font-medium">{acc.name}</span>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="truncate text-sm font-medium">{acc.name}</span>
                   </div>
-                  <span className={cn(
-                    'text-sm font-semibold',
-                    acc.balance < 0 ? 'text-red-600' : 'text-gray-800'
-                  )}>
-                    {formatCOP(acc.balance)}
-                  </span>
-                </div>
+                  <Money value={acc.balance} variant="balance" className="shrink-0 text-sm font-semibold" />
+                </li>
               )
             })}
-          </div>
+          </ul>
 
-          <div className="border-t border-gray-100 pt-3 flex justify-between items-center">
-            <span className="text-sm font-semibold text-gray-600">Total disponible</span>
-            <span className={cn(
-              'text-base font-bold',
-              totalBalance < 0 ? 'text-red-600' : 'text-gray-900'
-            )}>
-              {formatCOP(totalBalance)}
-            </span>
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3 text-fg">
+            <span className="text-sm font-medium text-fg-muted">Saldo en cuentas</span>
+            <Money value={totalBalance} variant="balance" className="text-base font-bold" />
           </div>
         </>
       )}
