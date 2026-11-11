@@ -1,6 +1,9 @@
 --- ============================================================
 -- FinanzasApp — Schema completo para Supabase
 -- Ejecutar en: Supabase Dashboard > SQL Editor
+-- IMPORTANTE: este archivo es el esquema base. Después de ejecutarlo, aplica en orden
+-- supabase/migrations/001_*.sql … 005_*.sql (las migraciones son la fuente de verdad:
+-- transferencias, saldos por trigger, recurrentes, cierre de mes y vistas seguras).
 -- ============================================================
 
 -- 0. EXTENSIONES

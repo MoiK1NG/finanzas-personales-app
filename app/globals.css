@@ -1,11 +1,192 @@
 @import "tailwindcss";
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Design tokens
+   Semantic colors swap automatically with the OS light/dark preference.
+   Use the Tailwind utilities generated in @theme below (bg-surface, text-fg,
+   border-border, text-income…) instead of raw grays/whites.
+   Every text/background pair used by the app passes WCAG AA (4.5:1) in both
+   modes; fg-faint is for placeholders and decorative icons only (≥3:1).
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --canvas: #f4f5f7;          /* page background */
+  --surface: #ffffff;         /* cards, sheets, header, nav, inputs */
+  --surface-2: #f8f9fa;       /* hover rows, table headers, subtle panels */
+  --muted: #eef0f3;           /* progress tracks, segmented controls, chips */
+  --border: #e5e7eb;          /* dividers, card borders */
+  --border-strong: #d1d5db;   /* input borders, secondary buttons */
+
+  /* Text */
+  --fg: #111827;              /* primary text, key figures */
+  --fg-muted: #4b5563;        /* secondary text, labels */
+  --fg-subtle: #5f6673;       /* tertiary text: dates, captions, meta */
+  --fg-faint: #8b93a0;        /* placeholders, decorative icons, disabled */
+
+  /* Brand */
+  --primary: #4f46e5;         /* solid fills: buttons, active nav, FAB */
+  --primary-hover: #4338ca;
+  --primary-fg: #ffffff;      /* text on primary */
+  --primary-soft: #eef2ff;    /* tinted backgrounds for selected/brand areas */
+  --accent: #4f46e5;          /* brand-colored text and icons on surfaces */
+  --ring: #6366f1;            /* focus ring */
+
+  /* Money semantics (text colors pass AA on surface and on their -soft bg) */
+  --income: #15803d;
+  --income-soft: #ecfdf3;
+  --income-solid: #22c55e;    /* fills only (bars, dots) — never text */
+  --expense: #c81e1e;
+  --expense-soft: #fef2f2;
+  --expense-solid: #ef4444;   /* fills only */
+  --warning: #a16207;
+  --warning-soft: #fef9c3;
+  --warning-solid: #eab308;   /* fills only */
+  --info: #1d4ed8;
+  --info-soft: #dbeafe;
+
+  /* Destructive actions */
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-fg: #ffffff;
+
+  /* Overlays */
+  --overlay: rgb(17 24 39 / 0.5);
+
+  /* Desktop sidebar (dark in both modes) */
+  --sidebar: #111827;
+  --sidebar-border: #1f2937;
+  --sidebar-fg: #ffffff;
+  --sidebar-fg-muted: #9ca3af;
+  --sidebar-hover: #1f2937;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --canvas: #0b0d12;
+    --surface: #151821;
+    --surface-2: #1b1f2a;
+    --muted: #242935;
+    --border: #262b37;
+    --border-strong: #363c4a;
+
+    --fg: #eceef3;
+    --fg-muted: #b0b6c3;
+    --fg-subtle: #8f97a6;
+    --fg-faint: #626a79;
+
+    --primary: #5b5ff0;
+    --primary-hover: #6d71f4;
+    --primary-fg: #ffffff;
+    --primary-soft: rgb(99 102 241 / 0.16);
+    --accent: #a5b4fc;
+    --ring: #818cf8;
+
+    --income: #4ade80;
+    --income-soft: rgb(34 197 94 / 0.14);
+    --income-solid: #22c55e;
+    --expense: #f87171;
+    --expense-soft: rgb(239 68 68 / 0.14);
+    --expense-solid: #ef4444;
+    --warning: #facc15;
+    --warning-soft: rgb(234 179 8 / 0.14);
+    --warning-solid: #eab308;
+    --info: #60a5fa;
+    --info-soft: rgb(59 130 246 / 0.14);
+
+    --danger: #dc2626;
+    --danger-hover: #ef4444;
+    --danger-fg: #ffffff;
+
+    --overlay: rgb(0 0 0 / 0.6);
+
+    --sidebar: #0f1117;
+    --sidebar-border: #1f2330;
+    --sidebar-fg: #ffffff;
+    --sidebar-fg-muted: #9aa1ae;
+    --sidebar-hover: #1a1e29;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-fg-faint: var(--fg-faint);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
+  --color-primary-soft: var(--primary-soft);
+  --color-accent: var(--accent);
+  --color-ring: var(--ring);
+
+  --color-income: var(--income);
+  --color-income-soft: var(--income-soft);
+  --color-income-solid: var(--income-solid);
+  --color-expense: var(--expense);
+  --color-expense-soft: var(--expense-soft);
+  --color-expense-solid: var(--expense-solid);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-solid: var(--warning-solid);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-fg: var(--danger-fg);
+
+  --color-overlay: var(--overlay);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-fg: var(--sidebar-fg);
+  --color-sidebar-fg-muted: var(--sidebar-fg-muted);
+  --color-sidebar-hover: var(--sidebar-hover);
+}
+
+@theme {
+  --animate-sheet-in: sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-dialog-in: dialog-in 160ms ease-out;
+  --animate-fade-in: fade-in 160ms ease-out;
+
+  @keyframes sheet-in {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  @keyframes dialog-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+}
+
 * {
   box-sizing: border-box;
 }
 
 html, body {
   height: 100%;
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--fg);
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Scrollbar styling */
@@ -17,9 +198,17 @@ html, body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: var(--border-strong);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: var(--fg-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

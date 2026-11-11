@@ -1,220 +1,207 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { updateTransfer } from '@/lib/transfers'
 import Button from '@/components/ui/Button'
-import Input from '@/components/ui/Input'
-import Select from '@/components/ui/Select'
+import Modal from '@/components/ui/Modal'
+import Alert from '@/components/ui/Alert'
+import { LoadingState } from '@/components/ui/Spinner'
+import { formatMoneyInput, isTransfer, parseMoneyInput } from '@/lib/utils'
 import type { Envelope, Transaction, BankAccount } from '@/types/database'
-import { X } from 'lucide-react'
-
-function fmtInput(raw: string): string {
-  const digits = raw.replace(/\D/g, '')
-  if (!digits) return ''
-  return new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(parseInt(digits))
-}
+import TransactionFormFields, {
+  DEFAULT_TRANSFER_DESCRIPTION, useTransactionForm, type TransactionFormValues,
+} from './TransactionFormFields'
+import { RecurringOccurrenceNote } from './RecurringFields'
 
 interface EditTransactionModalProps {
   transaction: Transaction
+  /**
+   * The other row of a transfer, when the caller already has it. If the edited row is a
+   * transfer and this is missing, the modal fetches it.
+   */
+  counterpart?: Transaction
   envelopes: Envelope[]
   bankAccounts: BankAccount[]
   onSuccess: () => void
   onClose: () => void
+  /** Month the movement is filed under ('YYYY-MM-01'), when known: keeps the date picker inside it. */
+  periodDate?: string
 }
+
+function initialValues(transaction: Transaction, counterpart: Transaction | null): TransactionFormValues {
+  const base = {
+    amount: formatMoneyInput(transaction.amount),
+    description: transaction.description,
+    transaction_date: transaction.transaction_date,
+    is_executed: transaction.is_executed,
+    recurring: false,
+    frequency: 'monthly' as const,
+    end_date: '',
+  }
+
+  if (transaction.type === 'transfer') {
+    const out = transaction.transfer_direction === 'out' ? transaction : counterpart
+    const into = transaction.transfer_direction === 'in' ? transaction : counterpart
+    return {
+      ...base,
+      type: 'transfer',
+      // The default description is not shown, so the optional field starts empty.
+      description: transaction.description === DEFAULT_TRANSFER_DESCRIPTION ? '' : transaction.description,
+      envelope_id: '',
+      bank_account_id: out?.bank_account_id ?? '',
+      to_bank_account_id: into?.bank_account_id ?? '',
+    }
+  }
+
+  return {
+    ...base,
+    type: transaction.type,
+    envelope_id: transaction.envelope_id ?? '',
+    bank_account_id: transaction.bank_account_id ?? '',
+    to_bank_account_id: '',
+  }
+}
+
+type CounterpartState =
+  | { status: 'ready'; tx: Transaction | null }
+  | { status: 'loading' }
+  | { status: 'error' }
 
 export default function EditTransactionModal({
   transaction,
+  counterpart,
   envelopes,
   bankAccounts,
   onSuccess,
   onClose,
+  periodDate,
 }: EditTransactionModalProps) {
-  const [type, setType]                   = useState<'income' | 'expense'>(
-    transaction.type === 'transfer' ? 'expense' : transaction.type
+  const transfer = isTransfer(transaction)
+  const needsCounterpart = transfer && !counterpart
+  const [sibling, setSibling] = useState<CounterpartState>(() =>
+    needsCounterpart ? { status: 'loading' } : { status: 'ready', tx: counterpart ?? null }
   )
-  const [amount, setAmount]               = useState(fmtInput(transaction.amount.toString()))
-  const [description, setDescription]     = useState(transaction.description)
-  const [envelopeId, setEnvelopeId]       = useState(transaction.envelope_id ?? '')
-  const [bankAccountId, setBankAccountId] = useState(transaction.bank_account_id ?? '')
-  const [date, setDate]                   = useState(transaction.transaction_date)
-  const [isExecuted, setIsExecuted]       = useState(transaction.is_executed)
-  const [loading, setLoading]             = useState(false)
-  const [error, setError]                 = useState<string | null>(null)
 
-  const envelopeOptions = envelopes.map(e => ({ value: e.id, label: e.name }))
-  const accountOptions  = bankAccounts.map(a => ({ value: a.id, label: a.name }))
+  const { values, validate, reset, fieldProps } = useTransactionForm(() =>
+    initialValues(transaction, counterpart ?? null)
+  )
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState<string | null>(null)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-
-    const amt = parseFloat(amount.replace(/\./g, ''))
-    if (!amt || amt <= 0) { setError('Ingresa un monto válido'); return }
-    if (!description.trim()) { setError('La descripción es obligatoria'); return }
-
-    setLoading(true)
-    const supabase = createClient()
-
-    // Reverse old balance effect
-    if (transaction.is_executed && transaction.bank_account_id) {
-      const reverseDelta = transaction.type === 'income' ? -transaction.amount : transaction.amount
-      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', transaction.bank_account_id).single()
-      if (acct) {
-        await supabase.from('bank_accounts').update({ balance: acct.balance + reverseDelta }).eq('id', transaction.bank_account_id)
-      }
-    }
-
-    const { error: err } = await supabase
+  // A transfer opened without its other row (e.g. only one side was in the list): fetch it
+  // before showing the form, since the accounts come from both rows.
+  useEffect(() => {
+    if (!needsCounterpart) return
+    let cancelled = false
+    createClient()
       .from('transactions')
-      .update({
-        type,
-        amount: amt,
-        description: description.trim(),
-        envelope_id: envelopeId || null,
-        bank_account_id: bankAccountId || null,
-        transaction_date: date,
-        is_executed: isExecuted,
+      .select('*')
+      .eq('transfer_group_id', transaction.transfer_group_id)
+      .neq('id', transaction.id)
+      .single<Transaction>()
+      .then(({ data, error: fetchErr }) => {
+        if (cancelled) return
+        if (fetchErr || !data) {
+          setSibling({ status: 'error' })
+          return
+        }
+        reset(initialValues(transaction, data))
+        setSibling({ status: 'ready', tx: data })
       })
-      .eq('id', transaction.id)
+    return () => { cancelled = true }
+  }, [needsCounterpart, transaction, reset])
 
-    // Apply new balance effect
-    if (!err && isExecuted && bankAccountId) {
-      const delta = type === 'income' ? amt : -amt
-      const { data: acct } = await supabase.from('bank_accounts').select('balance').eq('id', bankAccountId).single()
-      if (acct) {
-        await supabase.from('bank_accounts').update({ balance: acct.balance + delta }).eq('id', bankAccountId)
-      }
-    }
-
-    setLoading(false)
-    if (err) { setError('Error al guardar. Intenta de nuevo.'); return }
-
+  function finish() {
     onSuccess()
     onClose()
   }
 
-  const content = (
-    <>
-      <div className="flex items-center justify-between mb-5">
-        <h3 className="text-base font-semibold text-gray-800">Editar movimiento</h3>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-          <X className="h-5 w-5" />
-        </button>
-      </div>
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (sibling.status !== 'ready') return
+    setError(null)
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Type toggle */}
-        <div className="flex rounded-lg border border-gray-300 overflow-hidden">
-          {(['expense', 'income'] as const).map(t => (
-            <button
-              key={t} type="button"
-              onClick={() => setType(t)}
-              className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
-                type === t
-                  ? t === 'expense' ? 'bg-red-500 text-white' : 'bg-green-500 text-white'
-                  : 'text-gray-500 hover:bg-gray-50'
-              }`}
-            >
-              {t === 'expense' ? '↓ Gasto' : '↑ Ingreso'}
-            </button>
-          ))}
-        </div>
+    if (!validate()) return
+    const amount = parseMoneyInput(values.amount)
 
-        {/* Amount */}
-        <div>
-          <label className="text-sm font-medium text-gray-700 block mb-1">Monto (COP)</label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">$</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={amount}
-              onChange={e => setAmount(fmtInput(e.target.value))}
-              className="w-full pl-7 pr-3 py-3 text-xl font-bold border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
-        </div>
+    setLoading(true)
+    const supabase = createClient()
 
-        {/* Description */}
-        <div>
-          <label className="text-sm font-medium text-gray-700 block mb-1">Descripción</label>
-          <input
-            type="text"
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            placeholder="Descripción del movimiento"
-          />
-        </div>
+    // The database moves the account balances (trigger); a transfer's other row follows.
+    const { error: err } = transfer
+      ? await updateTransfer(supabase, transaction.transfer_group_id as string, {
+          fromAccountId: values.bank_account_id,
+          toAccountId: values.to_bank_account_id,
+          amount,
+          description: values.description.trim() || DEFAULT_TRANSFER_DESCRIPTION,
+          date: values.transaction_date,
+          isExecuted: values.is_executed,
+        })
+      : await supabase
+          .from('transactions')
+          .update({
+            type: values.type,
+            amount,
+            description: values.description.trim(),
+            envelope_id: values.envelope_id || null,
+            bank_account_id: values.bank_account_id || null,
+            transaction_date: values.transaction_date,
+            is_executed: values.is_executed,
+          })
+          .eq('id', transaction.id)
 
-        {/* Category */}
-        <Select
-          label="Categoría"
-          options={envelopeOptions}
-          placeholder="Sin categoría"
-          value={envelopeId}
-          onChange={e => setEnvelopeId(e.target.value)}
-        />
+    setLoading(false)
+    if (err) {
+      setError('No se pudo guardar el cambio. Intenta de nuevo.')
+      return
+    }
 
-        {/* Account */}
-        <Select
-          label="Cuenta"
-          options={accountOptions}
-          placeholder="Sin cuenta"
-          value={bankAccountId}
-          onChange={e => setBankAccountId(e.target.value)}
-        />
-
-        {/* Date */}
-        <Input
-          label="Fecha"
-          type="date"
-          value={date}
-          onChange={e => setDate(e.target.value)}
-        />
-
-        {/* Executed */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isExecuted}
-            onChange={e => setIsExecuted(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-          />
-          <span className="text-sm text-gray-700">Ya ejecutado (ya ocurrió)</span>
-        </label>
-
-        {error && <p className="text-xs text-red-600">{error}</p>}
-
-        <div className="flex gap-2 pt-1">
-          <Button type="submit" loading={loading} className="flex-1" size="lg">
-            Guardar cambios
-          </Button>
-          <Button type="button" variant="secondary" onClick={onClose} size="lg">
-            Cancelar
-          </Button>
-        </div>
-      </form>
-    </>
-  )
+    finish()
+  }
 
   return (
-    <>
-      {/* Mobile: bottom sheet */}
-      <div className="fixed inset-0 z-50 sm:hidden">
-        <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-        <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl p-5 shadow-2xl max-h-[92vh] overflow-y-auto">
-          {content}
+    <Modal
+      title={transfer ? 'Editar transferencia' : 'Editar movimiento'}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="secondary" className="flex-1 sm:flex-none" onClick={onClose} disabled={loading}>
+            Cancelar
+          </Button>
+          <Button
+            type="submit"
+            loading={loading}
+            disabled={sibling.status !== 'ready'}
+            className="flex-1 sm:flex-none"
+          >
+            Guardar cambios
+          </Button>
+        </>
+      }
+    >
+      {sibling.status === 'loading' ? (
+        <LoadingState label="Cargando transferencia" />
+      ) : sibling.status === 'error' ? (
+        <Alert tone="danger" title="No se pudo cargar la transferencia">
+          Cierra y vuelve a intentarlo.
+        </Alert>
+      ) : (
+        <div className="space-y-4">
+          <TransactionFormFields
+            {...fieldProps}
+            envelopes={envelopes}
+            bankAccounts={bankAccounts}
+            periodDate={periodDate}
+            mode="edit"
+          />
+          {transaction.recurring_template_id && (
+            <RecurringOccurrenceNote templateId={transaction.recurring_template_id} />
+          )}
+          {error && <Alert tone="danger">{error}</Alert>}
         </div>
-      </div>
-
-      {/* Desktop: centered modal */}
-      <div className="fixed inset-0 z-50 hidden sm:flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-        <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-          {content}
-        </div>
-      </div>
-    </>
+      )}
+    </Modal>
   )
 }

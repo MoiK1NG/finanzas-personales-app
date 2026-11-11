@@ -1,9 +1,12 @@
 'use client'
 
-import { formatCOP } from '@/lib/utils'
-import { cn } from '@/lib/utils'
+import type { CSSProperties } from 'react'
 import type { BankAccount } from '@/types/database'
-import { Pencil, Trash2, Landmark, Wallet, Banknote, Smartphone } from 'lucide-react'
+import { Archive, Banknote, Landmark, Pencil, RefreshCw, Smartphone, Wallet } from 'lucide-react'
+import { Card } from '@/components/ui/Card'
+import Button from '@/components/ui/Button'
+import IconButton from '@/components/ui/IconButton'
+import Money from '@/components/ui/Money'
 
 const TYPE_ICON = {
   checking: Landmark,
@@ -12,9 +15,10 @@ const TYPE_ICON = {
   cash:     Banknote,
 }
 
+// Same wording as the account type selector in AccountForm.
 const TYPE_LABEL = {
-  checking: 'Cta. corriente',
-  savings:  'Cta. ahorros',
+  checking: 'Cuenta corriente',
+  savings:  'Cuenta de ahorros',
   digital:  'Billetera digital',
   cash:     'Efectivo',
 }
@@ -22,59 +26,69 @@ const TYPE_LABEL = {
 interface AccountCardProps {
   account: BankAccount
   onEdit: () => void
+  /** Archives the account (it leaves the list; its movements stay). */
   onDelete: () => void
   onUpdateBalance: () => void
 }
 
+/**
+ * Tint for the icon tile, built from the user-chosen color.
+ * color-mix against the surface/text tokens keeps the hue in both themes:
+ * a soft tile on white in light mode, a dark tinted tile in dark mode, and an
+ * icon nudged toward the text color so it stays visible on its own tint.
+ */
+function tileStyle(color: string): CSSProperties {
+  return {
+    backgroundColor: `color-mix(in oklab, ${color} 16%, var(--surface))`,
+    color: `color-mix(in oklab, ${color} 78%, var(--fg))`,
+    boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${color} 28%, transparent)`,
+  }
+}
+
 export default function AccountCard({ account, onEdit, onDelete, onUpdateBalance }: AccountCardProps) {
   const Icon = TYPE_ICON[account.account_type] ?? Wallet
+  const color = account.color || '#6366f1'
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div
-            className="h-10 w-10 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ backgroundColor: account.color + '20' }}
-          >
-            <Icon className="h-5 w-5" style={{ color: account.color }} />
-          </div>
-          <div>
-            <p className="font-semibold text-gray-800">{account.name}</p>
-            <p className="text-xs text-gray-500">{TYPE_LABEL[account.account_type]}</p>
-          </div>
+    <Card className="flex h-full flex-col">
+      <div className="flex items-start gap-3">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+          style={tileStyle(color)}
+          aria-hidden="true"
+        >
+          <Icon className="h-5 w-5" />
         </div>
-        <div className="flex gap-1">
-          <button
-            onClick={onEdit}
-            className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-            title="Editar"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-            title="Eliminar"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <h3 className="truncate font-semibold text-fg">{account.name}</h3>
+          <p className="text-xs text-fg-subtle">{TYPE_LABEL[account.account_type] ?? 'Cuenta'}</p>
+        </div>
+        <div className="-mr-2 -mt-1.5 flex shrink-0 items-center gap-2">
+          <IconButton label={`Editar ${account.name}`} tone="primary" onClick={onEdit}>
+            <Pencil className="h-4 w-4" aria-hidden="true" />
+          </IconButton>
+          <IconButton label={`Archivar ${account.name}`} tone="danger" onClick={onDelete}>
+            <Archive className="h-4 w-4" aria-hidden="true" />
+          </IconButton>
         </div>
       </div>
 
-      <p className={cn(
-        'text-2xl font-bold tracking-tight mb-3',
-        account.balance < 0 ? 'text-red-600' : 'text-gray-900'
-      )}>
-        {formatCOP(account.balance)}
+      <p className="mt-4 text-2xl font-bold tracking-tight text-fg">
+        <span className="sr-only">Saldo: </span>
+        <Money value={account.balance} variant="balance" />
       </p>
 
-      <button
-        onClick={onUpdateBalance}
-        className="w-full text-xs font-medium text-center py-1.5 rounded-lg border border-dashed border-gray-300 text-gray-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-      >
-        Actualizar saldo
-      </button>
-    </div>
+      <div className="mt-auto pt-4">
+        <Button
+          variant="secondary"
+          className="w-full"
+          onClick={onUpdateBalance}
+          aria-label={`Actualizar saldo de ${account.name}`}
+        >
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          Actualizar saldo
+        </Button>
+      </div>
+    </Card>
   )
 }

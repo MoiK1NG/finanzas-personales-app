@@ -1,63 +1,79 @@
+import { type ReactNode } from 'react'
+import type { LucideIcon } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
-import { formatCOP } from '@/lib/utils'
+import Money from '@/components/ui/Money'
 import { cn } from '@/lib/utils'
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
 
 interface KPICardProps {
   title: string
   amount: number
-  subtitle?: string
-  trend?: 'up' | 'down' | 'neutral'
-  highlight?: boolean
+  /** Caption under the amount: a short text or a status pill. */
+  subtitle?: ReactNode
+  /** Small control aligned with the title, e.g. an edit IconButton. */
+  action?: ReactNode
+  /** hero = brand gradient card for the main figure of the page. */
+  variant?: 'default' | 'hero'
+  /** Decorative icon shown top-right when there is no action. */
+  icon?: LucideIcon
   className?: string
-  amountClassName?: string
 }
 
 export default function KPICard({
   title,
   amount,
   subtitle,
-  trend,
-  highlight,
+  action,
+  variant = 'default',
+  icon: Icon,
   className,
-  amountClassName,
 }: KPICardProps) {
-  const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus
+  const hero = variant === 'hero'
 
   return (
     <Card
-      padding="sm"
+      padding={hero ? 'md' : 'sm'}
       className={cn(
-        highlight && 'border-indigo-200 bg-indigo-50',
+        'min-w-0',
+        hero &&
+          'border-0 bg-linear-to-br from-indigo-600 to-indigo-800 text-white dark:from-indigo-700 dark:to-indigo-900',
         className
       )}
     >
-      <p className="text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 sm:mb-2 leading-tight">
-        {title}
-      </p>
-      <p
-        className={cn(
-          'text-lg sm:text-2xl font-bold tracking-tight leading-none',
-          amount >= 0 ? 'text-gray-900' : 'text-red-600',
-          amountClassName
-        )}
-      >
-        {formatCOP(amount)}
-      </p>
-      {(subtitle || trend) && (
-        <div className="flex items-center gap-1 mt-1 sm:mt-1.5">
-          {trend && (
-            <TrendIcon
-              className={cn('h-3 w-3 flex-shrink-0', {
-                'text-green-500': trend === 'up',
-                'text-red-500': trend === 'down',
-                'text-gray-400': trend === 'neutral',
-              })}
-            />
+      <div className="flex items-start justify-between gap-2">
+        <p
+          className={cn(
+            'min-w-0 text-xs font-medium leading-tight sm:text-sm',
+            hero ? 'text-white/80' : 'text-fg-muted'
           )}
-          {subtitle && (
-            <p className="text-[10px] sm:text-xs text-gray-500 truncate">{subtitle}</p>
-          )}
+        >
+          {title}
+        </p>
+        {action ? (
+          <div className="-my-2 -mr-2 shrink-0">{action}</div>
+        ) : Icon ? (
+          <span
+            aria-hidden="true"
+            className={cn(
+              '-my-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+              hero ? 'bg-white/15 text-white' : 'bg-muted text-fg-subtle'
+            )}
+          >
+            <Icon className="h-4 w-4" />
+          </span>
+        ) : null}
+      </div>
+
+      <p className={cn('mt-1.5 font-bold leading-none tracking-tight', hero ? 'text-white' : 'text-fg')}>
+        <Money
+          value={amount}
+          variant={hero ? 'plain' : 'balance'}
+          className={hero ? 'text-2xl sm:text-3xl' : 'text-base min-[380px]:text-lg sm:text-xl'}
+        />
+      </p>
+
+      {subtitle && (
+        <div className={cn('mt-2 text-xs', hero ? 'text-white/80' : 'text-fg-subtle')}>
+          {subtitle}
         </div>
       )}
     </Card>
