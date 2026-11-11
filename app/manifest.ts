@@ -13,6 +13,16 @@ export default function manifest(): MetadataRoute.Manifest {
     // Same values as the light-mode canvas token and viewport themeColor in app/layout.tsx.
     background_color: '#f4f5f7',
     theme_color: '#ffffff',
+    // Long-press the app icon on Android: jump straight to the add form.
+    shortcuts: [
+      {
+        name: 'Nuevo gasto',
+        short_name: 'Nuevo gasto',
+        description: 'Registrar un gasto',
+        url: '/transacciones?nuevo=1',
+        icons: [{ src: '/icon/192', sizes: '192x192', type: 'image/png' }],
+      },
+    ],
     icons: [
       { src: '/icon/192', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: '/icon/512', sizes: '512x512', type: 'image/png', purpose: 'any' },

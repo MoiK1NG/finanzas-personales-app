@@ -169,6 +169,27 @@ export interface PeriodSummary {
   pending_expenses: number
 }
 
+/** A payment notification forwarded by the phone, waiting in the "Por clasificar" inbox. */
+export interface CapturedNotification {
+  id: string
+  user_id: string
+  /** Name of the app that showed the notification, e.g. "Nu", "Nequi Colombia". */
+  source_app: string
+  title: string | null
+  body: string | null
+  received_at: string
+  status: 'pending' | 'registered' | 'dismissed'
+  resolved_at: string | null
+}
+
+/** Personal key the phone uses to send notifications (only its hash is stored). */
+export interface CaptureToken {
+  user_id: string
+  token_hash: string
+  created_at: string
+  last_used_at: string | null
+}
+
 /** Result of the period_reconciliation RPC (Discrepancia card). */
 export interface PeriodReconciliation {
   opening_balance: number | null

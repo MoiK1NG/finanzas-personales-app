@@ -28,6 +28,8 @@ interface QuickAddFormProps {
   onOpenChange?: (open: boolean) => void
   /** Classes for the built-in trigger button (uncontrolled mode), e.g. "w-full". */
   triggerClassName?: string
+  /** Values the form opens with (e.g. from a captured notification). The user can change all of them. */
+  initial?: Partial<TransactionFormValues>
 }
 
 /** Today's local date, kept inside the month being viewed (the movement is filed under it). */
@@ -39,7 +41,7 @@ function defaultDate(periodDate: string): string {
   return today
 }
 
-function initialValues(budgetPeriod: BudgetPeriod): TransactionFormValues {
+function initialValues(budgetPeriod: BudgetPeriod, initial?: Partial<TransactionFormValues>): TransactionFormValues {
   return {
     type: 'expense',
     amount: '',
@@ -52,11 +54,12 @@ function initialValues(budgetPeriod: BudgetPeriod): TransactionFormValues {
     recurring: false,
     frequency: 'monthly',
     end_date: '',
+    ...initial,
   }
 }
 
 export default function QuickAddForm({
-  envelopes, bankAccounts, budgetPeriod, onSuccess, open: openProp, onOpenChange, triggerClassName,
+  envelopes, bankAccounts, budgetPeriod, onSuccess, open: openProp, onOpenChange, triggerClassName, initial,
 }: QuickAddFormProps) {
   const isControlled = openProp !== undefined
   const [internalOpen, setInternalOpen] = useState(false)
@@ -82,6 +85,7 @@ export default function QuickAddForm({
           envelopes={envelopes}
           bankAccounts={bankAccounts}
           budgetPeriod={budgetPeriod}
+          initial={initial}
           onSaved={() => { onSuccess(); setOpen(false) }}
           onClose={() => setOpen(false)}
         />
@@ -91,15 +95,16 @@ export default function QuickAddForm({
 }
 
 function QuickAddDialog({
-  envelopes, bankAccounts, budgetPeriod, onSaved, onClose,
+  envelopes, bankAccounts, budgetPeriod, initial, onSaved, onClose,
 }: {
   envelopes: Envelope[]
   bankAccounts: BankAccount[]
   budgetPeriod: BudgetPeriod
+  initial?: Partial<TransactionFormValues>
   onSaved: () => void
   onClose: () => void
 }) {
-  const { values, validate, fieldProps } = useTransactionForm(() => initialValues(budgetPeriod))
+  const { values, validate, fieldProps } = useTransactionForm(() => initialValues(budgetPeriod, initial))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /**
