@@ -12,9 +12,29 @@ import { readCaptureRequest } from '@/lib/captureRequest'
  *   Body: plain text, first line = app name, second line = title, the rest = text
  *         (JSON {app,title,text} and form fields app/title/text also work)
  */
+/**
+ * One log line per rejected request, so a phone that fails can be diagnosed from the Vercel logs.
+ * Only shapes are logged (header names, lengths), never the key or the notification text.
+ */
+function logRejection(reason: string, request: Request, fields: { token: string | null; app: string; title: string; text: string }) {
+  console.warn('captura rechazada', JSON.stringify({
+    reason,
+    contentType: request.headers.get('content-type'),
+    headers: [...request.headers.keys()].filter(name => !name.startsWith('x-vercel') && !name.startsWith('x-forwarded')),
+    tokenLength: fields.token?.length ?? 0,
+    appLength: fields.app.length,
+    titleLength: fields.title.length,
+    textLength: fields.text.length,
+  }))
+}
+
 export async function POST(request: Request) {
-  const { token, app, title, text } = await readCaptureRequest(request)
-  if (!token) return Response.json({ ok: false, error: 'missing_token' }, { status: 401 })
+  const fields = await readCaptureRequest(request)
+  const { token, app, title, text } = fields
+  if (!token) {
+    logRejection('missing_token', request, fields)
+    return Response.json({ ok: false, error: 'missing_token' }, { status: 401 })
+  }
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -31,6 +51,7 @@ export async function POST(request: Request) {
   if (error) {
     const invalid = error.message.includes('invalid_token')
     const empty = error.message.includes('empty_notification')
+    logRejection(invalid ? 'invalid_token' : empty ? 'empty_notification' : `server_error: ${error.code ?? ''}`, request, fields)
     // Never echo the notification content or database details back.
     return Response.json(
       { ok: false, error: invalid ? 'invalid_token' : empty ? 'empty_notification' : 'server_error' },
