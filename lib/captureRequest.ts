@@ -44,6 +44,12 @@ export async function readCaptureRequest(request: Request): Promise<CaptureReque
     }
   } else if (contentType.includes('application/x-www-form-urlencoded')) {
     fields = Object.fromEntries(new URLSearchParams(raw))
+    // Automation apps often label a plain-text body as a form by default: if no known field
+    // is there, read it as text instead of losing the notification.
+    if (![...APP_KEYS, ...TITLE_KEYS, ...TEXT_KEYS].some(key => key in fields)) {
+      fields = {}
+      lines = raw.split('\n')
+    }
   } else {
     lines = raw.split('\n')
   }
