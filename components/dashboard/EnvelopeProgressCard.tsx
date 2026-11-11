@@ -1,10 +1,11 @@
 import type { CSSProperties } from 'react'
-import { PiggyBank, Wallet } from 'lucide-react'
+import Link from 'next/link'
+import { ChevronRight, PiggyBank, Wallet } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import Money from '@/components/ui/Money'
 import ProgressBar from '@/components/ui/ProgressBar'
-import { cn, formatCOP, formatPercent, getSpendTone } from '@/lib/utils'
+import { cn, focusRing, formatCOP, formatPercent, getSpendTone } from '@/lib/utils'
 import type { EnvelopeSummary } from '@/types/database'
 
 const TONE_TEXT = { ok: 'text-income', warning: 'text-warning', over: 'text-expense' } as const
@@ -31,7 +32,7 @@ export default function EnvelopeProgressCard({ envelope, className }: EnvelopePr
   const Icon = envelope.is_savings ? PiggyBank : Wallet
 
   return (
-    <Card padding="sm" className={className}>
+    <Card padding="sm" className={cn('relative transition-colors hover:bg-surface-2', className)}>
       <div className="flex items-start gap-3">
         <span
           aria-hidden="true"
@@ -43,7 +44,18 @@ export default function EnvelopeProgressCard({ envelope, className }: EnvelopePr
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1.5">
-            <p className="truncate text-sm font-semibold text-fg">{envelope.envelope_name}</p>
+            {/* The link's ::after covers the card, so the whole card opens the category's movements. */}
+            <Link
+              href={`/transacciones?categoria=${envelope.envelope_id}`}
+              className={cn(
+                'inline-flex min-w-0 items-center gap-0.5 rounded text-sm font-semibold text-fg after:absolute after:inset-0 after:rounded-xl',
+                focusRing
+              )}
+            >
+              <span className="truncate">{envelope.envelope_name}</span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-fg-subtle" aria-hidden="true" />
+              <span className="sr-only">: ver movimientos</span>
+            </Link>
             {envelope.is_savings && <Badge variant="indigo">Ahorro</Badge>}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">

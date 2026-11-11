@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, type FocusEvent } from 'react'
+import Link from 'next/link'
 import { Check, Pencil, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Card } from '@/components/ui/Card'
@@ -149,7 +150,16 @@ export default function BudgetTable({
                         className="h-2.5 w-2.5 shrink-0 rounded-full"
                         style={{ backgroundColor: `color-mix(in oklch, ${s.color} 85%, var(--fg))` }}
                       />
-                      <span className="max-w-40 truncate font-medium text-fg">{s.envelope_name}</span>
+                      <Link
+                        href={`/transacciones?categoria=${s.envelope_id}`}
+                        title={`Ver movimientos de ${s.envelope_name}`}
+                        className={cn(
+                          'max-w-40 truncate rounded font-medium text-fg underline-offset-4 hover:text-accent hover:underline',
+                          focusRing
+                        )}
+                      >
+                        {s.envelope_name}
+                      </Link>
                       {s.is_savings && <Badge variant="indigo">Ahorro</Badge>}
                     </div>
                   </th>

@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
+import { Suspense, useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   cn, entryRow, focusRing, formatCOP, formatPeriodLabel, groupTransfers, isPending, transferLabel,
@@ -14,16 +15,20 @@ import Header from '@/components/layout/Header'
 import QuickAddForm from '@/components/transactions/QuickAddForm'
 import EditTransactionModal from '@/components/transactions/EditTransactionModal'
 import MovementRow, { entryDescription } from '@/components/transactions/MovementRow'
+import CategorySummary from '@/components/transactions/CategorySummary'
 import ClosedMonthAlert from '@/components/budget/ClosedMonthAlert'
 import { Card } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Money from '@/components/ui/Money'
 import PageHeader from '@/components/ui/PageHeader'
 import SegmentedControl from '@/components/ui/SegmentedControl'
+import Select from '@/components/ui/Select'
 import EmptyState from '@/components/ui/EmptyState'
 import Alert from '@/components/ui/Alert'
 import Spinner, { LoadingState } from '@/components/ui/Spinner'
-import type { Envelope, BudgetPeriod, Transaction, BankAccount, MovementEntry } from '@/types/database'
+import type {
+  Envelope, BudgetPeriod, Transaction, BankAccount, MovementEntry, EnvelopeSummary,
+} from '@/types/database'
 import { ArrowLeftRight, Plus, Repeat } from 'lucide-react'
 
 type TxWithEnvelope = Transaction & { envelope?: Envelope | null }
@@ -65,12 +70,36 @@ function matchesFilter(entry: MovementEntry, filter: Filter): boolean {
   return entry.kind === 'transaction' && entry.tx.type === filter
 }
 
+/** URL value of the category filter for expenses that have no category yet. */
+const NO_CATEGORY = 'none'
+
+/** category: '' = all, an envelope id, or NO_CATEGORY. Transfers never have a category. */
+function matchesCategory(entry: MovementEntry, category: string): boolean {
+  if (!category) return true
+  if (entry.kind !== 'transaction') return false
+  if (category === NO_CATEGORY) return entry.tx.type === 'expense' && entry.tx.envelope_id === null
+  return entry.tx.envelope_id === category
+}
+
+// useSearchParams needs a Suspense boundary on a prerendered page (Next docs: use-search-params).
 export default function TransaccionesPage() {
+  return (
+    <Suspense fallback={null}>
+      <TransaccionesContent />
+    </Suspense>
+  )
+}
+
+function TransaccionesContent() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [periodDate, setPeriodDate]   = usePeriod()
   const [period, setPeriod]           = useState<BudgetPeriod | null>(null)
   const [envelopes, setEnvelopes]     = useState<Envelope[]>([])
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [transactions, setTransactions] = useState<TxWithEnvelope[]>([])
+  const [envelopeSummaries, setEnvelopeSummaries] = useState<EnvelopeSummary[]>([])
   const [loading, setLoading]         = useState(true)
   /** Month whose data is on screen: the full loader only shows on first load and month changes. */
   const [loadedPeriod, setLoadedPeriod] = useState<string | null>(null)
@@ -115,16 +144,23 @@ export default function TransaccionesPage() {
     if (per) {
       // Creates this month's projected recurring movements (idempotent; a failure doesn't block the list).
       await ensureRecurringOccurrences(supabase, per.id)
-      const { data: txs, error: txsErr } = await supabase
-        .from('transactions')
-        .select('*, envelope:envelopes(*)')
-        .eq('budget_period_id', per.id)
-        .order('transaction_date', { ascending: false })
-        .order('created_at', { ascending: false })
+      const [{ data: txs, error: txsErr }, { data: sums }] = await Promise.all([
+        supabase
+          .from('transactions')
+          .select('*, envelope:envelopes(*)')
+          .eq('budget_period_id', per.id)
+          .order('transaction_date', { ascending: false })
+          .order('created_at', { ascending: false }),
+        // Budget of each category this month, for the summary shown when filtering by category.
+        // Optional: if it fails the list still works, just without the budget figures.
+        supabase.from('v_envelope_summary').select('*').eq('budget_period_id', per.id).eq('user_id', user.id),
+      ])
       setTransactions(txs ?? [])
+      setEnvelopeSummaries(sums ?? [])
       if (txsErr) failed = true
     } else {
       setTransactions([])
+      setEnvelopeSummaries([])
     }
 
     setLoadError(failed ? 'network' : null)
@@ -136,6 +172,19 @@ export default function TransaccionesPage() {
 
   const accountNames = new Map(bankAccounts.map(a => [a.id, a.name]))
   const entries = groupTransfers(transactions)
+
+  // The category filter lives in the URL (?categoria=<id>|none) so Presupuesto and Inicio can link to it.
+  const categoryParam = searchParams.get('categoria') ?? ''
+  const selectedEnvelope = envelopes.find(e => e.id === categoryParam)
+  const categoryFilter = categoryParam === NO_CATEGORY || selectedEnvelope ? categoryParam : ''
+
+  function setCategory(value: string) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (value) params.set('categoria', value)
+    else params.delete('categoria')
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }
 
   function openEdit(entry: MovementEntry) {
     if (entry.kind === 'transaction') {
@@ -211,9 +260,24 @@ export default function TransaccionesPage() {
   const pendingCount = entries.filter(isPending).length
   // The chip hides at 0, so the filter can't stay on with no way to turn it off.
   const showPendingOnly = pendingOnly && pendingCount > 0
-  const filtered = entries.filter(entry =>
+  const inCategory = entries.filter(entry => matchesCategory(entry, categoryFilter))
+  const filtered = inCategory.filter(entry =>
     matchesFilter(entry, filterType) && (!showPendingOnly || isPending(entry))
   )
+  // Executed expenses of the selected category (same rule as the "Gastado" column in Presupuesto).
+  const categorySpent = inCategory.reduce(
+    (sum, entry) =>
+      entry.kind === 'transaction' && entry.tx.type === 'expense' && entry.tx.is_executed ? sum + entry.tx.amount : sum,
+    0
+  )
+  const uncategorizedCount = entries.filter(entry => matchesCategory(entry, NO_CATEGORY)).length
+  const categoryOptions = [
+    ...envelopes.map(e => ({ value: e.id, label: e.name })),
+    // Always offered while selected; otherwise only when there is something to classify.
+    ...(uncategorizedCount > 0 || categoryFilter === NO_CATEGORY
+      ? [{ value: NO_CATEGORY, label: `Gastos sin categoría (${uncategorizedCount})` }]
+      : []),
+  ]
 
   // Transfers move money between accounts: they are neither income nor expense.
   const totalIncome  = transactions.filter(t => t.type === 'income'  && t.is_executed).reduce((a, t) => a + t.amount, 0)
@@ -250,7 +314,16 @@ export default function TransaccionesPage() {
 
   const emptyCopy = showPendingOnly
     ? { title: 'Nada por confirmar con este filtro', description: 'Prueba con otro tipo o quita el filtro «por confirmar».' }
-    : EMPTY_COPY[filterType]
+    : categoryFilter === NO_CATEGORY
+      ? { title: 'No hay gastos sin categoría', description: 'Todos tus gastos de este mes ya tienen categoría.' }
+      : selectedEnvelope
+        ? {
+            title: `No hay movimientos en «${selectedEnvelope.name}»`,
+            description: filterType === 'all'
+              ? 'Los gastos que registres en esta categoría aparecerán aquí.'
+              : 'Prueba con otro tipo de movimiento.',
+          }
+        : EMPTY_COPY[filterType]
 
   return (
     <>
@@ -386,7 +459,36 @@ export default function TransaccionesPage() {
                   </button>
                 )}
                 {recurringLink('ml-auto h-10 px-2 text-accent hover:bg-primary-soft lg:hidden')}
+                <div className="w-full sm:order-first sm:w-56">
+                  <Select
+                    aria-label="Filtrar por categoría"
+                    placeholder="Todas las categorías"
+                    options={categoryOptions}
+                    value={categoryFilter}
+                    onChange={e => setCategory(e.target.value)}
+                  />
+                </div>
               </div>
+
+              {categoryFilter === NO_CATEGORY ? (
+                <CategorySummary
+                  name="Gastos sin categoría"
+                  spent={categorySpent}
+                  count={inCategory.length}
+                  hint="toca un gasto para asignarle una categoría"
+                  onClear={() => setCategory('')}
+                />
+              ) : selectedEnvelope ? (
+                <CategorySummary
+                  name={selectedEnvelope.name}
+                  color={selectedEnvelope.color}
+                  isSavings={selectedEnvelope.is_savings}
+                  spent={categorySpent}
+                  count={inCategory.length}
+                  budget={envelopeSummaries.find(s => s.envelope_id === selectedEnvelope.id)}
+                  onClear={() => setCategory('')}
+                />
+              ) : null}
 
               <Card padding="none">
                 {filtered.length === 0 ? (
@@ -398,6 +500,10 @@ export default function TransaccionesPage() {
                       showPendingOnly ? (
                         <Button variant="secondary" onClick={() => setPendingOnly(false)}>
                           Ver todos
+                        </Button>
+                      ) : categoryFilter === NO_CATEGORY ? (
+                        <Button variant="secondary" onClick={() => setCategory('')}>
+                          Ver todos los movimientos
                         </Button>
                       ) : (
                         addButton()

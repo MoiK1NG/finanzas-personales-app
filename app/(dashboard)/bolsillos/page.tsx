@@ -29,7 +29,7 @@ import ColorSwatches, { CATEGORY_COLORS } from '@/components/envelopes/ColorSwat
 import EditCategoryModal, { type EditableCategory } from '@/components/envelopes/EditCategoryModal'
 import type { BudgetPeriod, EnvelopeSummary, PeriodSummary } from '@/types/database'
 import {
-  Plus, Trash2, Check, X, Pencil, PiggyBank, Copy, ArrowUpDown, ChevronUp, ChevronDown,
+  Plus, Trash2, Check, X, Pencil, PiggyBank, Copy, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -966,7 +966,20 @@ export default function BolsillosPage() {
                         <li key={row.envelopeId} className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: row.color }} aria-hidden="true" />
-                            <p className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{row.name}</p>
+                            <div className="min-w-0 flex-1">
+                              <Link
+                                href={`/transacciones?categoria=${row.envelopeId}`}
+                                title={`Ver movimientos de ${row.name}`}
+                                className={cn(
+                                  'inline-flex max-w-full items-center gap-0.5 rounded text-sm font-semibold text-fg hover:text-accent',
+                                  focusRing
+                                )}
+                              >
+                                <span className="truncate">{row.name}</span>
+                                <ChevronRight className="h-4 w-4 shrink-0 text-fg-subtle" aria-hidden="true" />
+                                <span className="sr-only">: ver movimientos</span>
+                              </Link>
+                            </div>
                             {row.isSavings && <Badge variant="indigo">Ahorro</Badge>}
                             <div className="-mr-2 flex shrink-0 items-center">
                               {renderRowActions(row, index)}
@@ -1053,7 +1066,16 @@ export default function BolsillosPage() {
                             <td className="max-w-0 py-2.5 pl-4 pr-3">
                               <div className="flex min-w-0 items-center gap-2.5">
                                 <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: row.color }} aria-hidden="true" />
-                                <span className="truncate font-medium text-fg">{row.name}</span>
+                                <Link
+                                  href={`/transacciones?categoria=${row.envelopeId}`}
+                                  title={`Ver movimientos de ${row.name}`}
+                                  className={cn(
+                                    'min-w-0 truncate rounded font-medium text-fg underline-offset-4 hover:text-accent hover:underline',
+                                    focusRing
+                                  )}
+                                >
+                                  {row.name}
+                                </Link>
                                 {row.isSavings && <Badge variant="indigo" className="shrink-0">Ahorro</Badge>}
                               </div>
                             </td>
