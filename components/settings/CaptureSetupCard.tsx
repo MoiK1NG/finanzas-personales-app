@@ -11,6 +11,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card'
 import Alert from '@/components/ui/Alert'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
+import Input from '@/components/ui/Input'
 import { LoadingState } from '@/components/ui/Spinner'
 import { cn, focusRing } from '@/lib/utils'
 import type { CaptureToken } from '@/types/database'
@@ -22,6 +23,8 @@ type Status =
   | { kind: 'on'; createdAt: string; lastUsedAt: string | null }
 
 const ENDPOINT_PATH = '/api/captura'
+
+type TestResult = 'sending' | 'ok' | 'invalid' | 'failed' | null
 
 /** 32 random bytes, URL-safe: long enough that it cannot be guessed. */
 function generateKey(): string {
@@ -62,7 +65,9 @@ export default function CaptureSetupCard() {
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState<'url' | 'key' | null>(null)
-  const [testResult, setTestResult] = useState<'sending' | 'ok' | 'failed' | null>(null)
+  const [testResult, setTestResult] = useState<TestResult>(null)
+  /** Key pasted to test the connection later (the app cannot show the active one again). */
+  const [testKey, setTestKey] = useState('')
   const { confirm, confirmDialog } = useConfirm()
 
   useEffect(() => {
@@ -97,6 +102,7 @@ export default function CaptureSetupCard() {
       return
     }
     setNewKey(key)
+    setTestKey('')
     setTestResult(null)
     setStatus({ kind: 'on', createdAt, lastUsedAt: null })
   }
@@ -144,21 +150,33 @@ export default function CaptureSetupCard() {
     }
   }
 
-  /** Sends a sample notification through the same address the phone will use. */
-  async function sendTest() {
-    if (!newKey) return
+  /** Sends a sample notification through the same address and key the phone uses. */
+  async function sendTest(key: string) {
+    const trimmed = key.trim()
+    if (!trimmed) return
     setTestResult('sending')
     try {
       const response = await fetch(ENDPOINT_PATH, {
         method: 'POST',
-        headers: { 'content-type': 'text/plain', 'x-capture-token': newKey },
+        headers: { 'content-type': 'text/plain', 'x-capture-token': trimmed },
         body: 'FinanzasApp\nPrueba de conexión\nSi ves esto en «Por clasificar», la captura funciona. Puedes descartarla.',
       })
-      setTestResult(response.ok ? 'ok' : 'failed')
+      setTestResult(response.ok ? 'ok' : response.status === 401 ? 'invalid' : 'failed')
+      // A valid key updates "Última notificación recibida".
+      if (response.ok) fetchStatus().then(setStatus)
     } catch {
       setTestResult('failed')
     }
   }
+
+  const testMessage = (idle: string) => (
+    <p role="status" className={cn('text-xs', testResult === 'invalid' ? 'text-expense' : 'text-fg-subtle')}>
+      {testResult === 'ok' && 'Llegó. Mírala en Movimientos → Por clasificar y descártala.'}
+      {testResult === 'invalid' && 'Esa clave no coincide con la activa. Revisa que esté completa o genera una nueva.'}
+      {testResult === 'failed' && 'No llegó. Revisa tu conexión e intenta de nuevo.'}
+      {(testResult === null || testResult === 'sending') && idle}
+    </p>
+  )
 
   const copyRow = (label: string, value: string, what: 'url' | 'key') => (
     <div>
@@ -215,16 +233,44 @@ export default function CaptureSetupCard() {
               {copyRow('Dirección', endpoint, 'url')}
               {copyRow('Clave', newKey, 'key')}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Button variant="soft" size="sm" loading={testResult === 'sending'} onClick={sendTest}>
+                <Button variant="soft" size="sm" loading={testResult === 'sending'} onClick={() => sendTest(newKey)}>
                   Enviar prueba
                 </Button>
-                <p role="status" className="text-xs text-fg-subtle">
-                  {testResult === 'ok' && 'Llegó. Mírala en Movimientos → Por clasificar y descártala.'}
-                  {testResult === 'failed' && 'No llegó. Revisa tu conexión e intenta de nuevo.'}
-                  {testResult === null && 'Comprueba que la dirección y la clave funcionan antes de ir al teléfono.'}
-                </p>
+                {testMessage('Comprueba que la dirección y la clave funcionan antes de ir al teléfono.')}
               </div>
             </div>
+          )}
+
+          {status.kind === 'on' && !newKey && (
+            <form
+              className="space-y-3 rounded-lg border border-border p-3"
+              onSubmit={e => { e.preventDefault(); sendTest(testKey) }}
+            >
+              <p className="text-sm font-medium text-fg">Probar conexión</p>
+              {copyRow('Dirección', endpoint, 'url')}
+              <Input
+                label="Tu clave"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={testKey}
+                onChange={e => { setTestKey(e.target.value); if (testResult !== 'sending') setTestResult(null) }}
+                placeholder="Pega la clave que usas en MacroDroid"
+                hint="No se guarda: solo se usa para esta prueba. Si no la tienes, genera una nueva."
+              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Button
+                  type="submit"
+                  variant="soft"
+                  size="sm"
+                  loading={testResult === 'sending'}
+                  disabled={!testKey.trim()}
+                >
+                  Enviar prueba
+                </Button>
+                {testMessage('Envía una notificación de prueba igual a la que manda tu teléfono.')}
+              </div>
+            </form>
           )}
 
           {status.kind === 'on' && (
