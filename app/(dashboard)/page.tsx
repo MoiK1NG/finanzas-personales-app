@@ -36,7 +36,7 @@ import type {
   Profile,
   BankAccount,
 } from '@/types/database'
-import { CalendarPlus, ChevronRight, Landmark, LayoutGrid, Pencil, Plus, Table2, Wallet } from 'lucide-react'
+import { CalendarPlus, ChevronRight, Inbox, Landmark, LayoutGrid, Pencil, Plus, Table2, Wallet } from 'lucide-react'
 
 type View = 'cards' | 'table'
 
@@ -69,6 +69,8 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState<BankAccount[]>([])
   const [entries, setEntries] = useState<MovementEntry[]>([])
   const [pendingCount, setPendingCount] = useState(0)
+  /** Payment notifications forwarded by the phone that are waiting in Movimientos → Por clasificar. */
+  const [captureCount, setCaptureCount] = useState(0)
   const [reconciliation, setReconciliation] = useState<PeriodReconciliation | null>(null)
   const [settingOpening, setSettingOpening] = useState(false)
   const [openingError, setOpeningError] = useState<string | null>(null)
@@ -128,6 +130,7 @@ export default function DashboardPage() {
       { data: txs },
       { count: pending },
       { data: rec },
+      { count: captured },
     ] = await Promise.all([
       supabase.from('envelopes').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
       supabase.from('v_envelope_summary').select('*').eq('budget_period_id', per.id).eq('user_id', user.id),
@@ -140,6 +143,9 @@ export default function DashboardPage() {
         .eq('budget_period_id', per.id).eq('is_executed', false)
         .or('type.neq.transfer,transfer_direction.eq.out'),
       getReconciliation(supabase, per.id),
+      // Optional feature: if capture is not set up in the database this just counts 0.
+      supabase.from('captured_notifications').select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id).eq('status', 'pending'),
     ])
     if (isStale()) return
 
@@ -153,6 +159,7 @@ export default function DashboardPage() {
     setPeriodSummary(perSum)
     setEntries(groupTransfers(txs ?? []).slice(0, 8))
     setPendingCount(pending ?? 0)
+    setCaptureCount(captured ?? 0)
     setReconciliation(rec)
     setLoadedPeriod(periodDate)
     setLoading(false)
@@ -250,6 +257,27 @@ export default function DashboardPage() {
         ) : (
           <>
             {period.closed_at && <ClosedMonthAlert periodDate={periodDate} />}
+
+            {captureCount > 0 && (
+              <Alert
+                tone="info"
+                icon={Inbox}
+                title={captureCount === 1 ? 'Tienes 1 pago por clasificar' : `Tienes ${captureCount} pagos por clasificar`}
+                action={
+                  <Link
+                    href="/transacciones"
+                    className={cn(
+                      'inline-flex h-10 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-fg transition-colors hover:bg-primary-hover sm:w-auto',
+                      focusRing
+                    )}
+                  >
+                    Clasificar
+                  </Link>
+                }
+              >
+                Los detectó tu teléfono en las notificaciones. Elige la categoría o descártalos.
+              </Alert>
+            )}
 
             {/* Summary: what I have, then how the month is going */}
             <section aria-labelledby="inicio-resumen" className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">

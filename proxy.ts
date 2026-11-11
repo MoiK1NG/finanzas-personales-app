@@ -46,6 +46,7 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Static assets and the PWA files (manifest, generated icons, service worker) must load without a session.
-    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icon|apple-icon|sw.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
+    // /api/captura is called by the phone with a personal capture key instead of a session.
+    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icon|apple-icon|sw.js|api/captura|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
   ],
 }

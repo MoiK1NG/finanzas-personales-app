@@ -16,6 +16,8 @@ import QuickAddForm from '@/components/transactions/QuickAddForm'
 import EditTransactionModal from '@/components/transactions/EditTransactionModal'
 import MovementRow, { entryDescription } from '@/components/transactions/MovementRow'
 import CategorySummary from '@/components/transactions/CategorySummary'
+import type { TransactionFormValues } from '@/components/transactions/TransactionFormFields'
+import CaptureInbox from '@/components/captures/CaptureInbox'
 import ClosedMonthAlert from '@/components/budget/ClosedMonthAlert'
 import { Card } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
@@ -27,7 +29,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import Alert from '@/components/ui/Alert'
 import Spinner, { LoadingState } from '@/components/ui/Spinner'
 import type {
-  Envelope, BudgetPeriod, Transaction, BankAccount, MovementEntry, EnvelopeSummary,
+  Envelope, BudgetPeriod, Transaction, BankAccount, MovementEntry, EnvelopeSummary, CapturedNotification,
 } from '@/types/database'
 import { ArrowLeftRight, Plus, Repeat } from 'lucide-react'
 
@@ -100,6 +102,11 @@ function TransaccionesContent() {
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [transactions, setTransactions] = useState<TxWithEnvelope[]>([])
   const [envelopeSummaries, setEnvelopeSummaries] = useState<EnvelopeSummary[]>([])
+  /** Payment notifications forwarded by the phone, waiting to be registered or dismissed. */
+  const [captures, setCaptures]       = useState<CapturedNotification[]>([])
+  /** Capture being registered: the add form opens prefilled with what was read from it. */
+  const [registering, setRegistering] = useState<{ capture: CapturedNotification; initial: Partial<TransactionFormValues> } | null>(null)
+  const [captureBusyId, setCaptureBusyId] = useState<string | null>(null)
   const [loading, setLoading]         = useState(true)
   /** Month whose data is on screen: the full loader only shows on first load and month changes. */
   const [loadedPeriod, setLoadedPeriod] = useState<string | null>(null)
@@ -131,14 +138,20 @@ function TransaccionesContent() {
       return
     }
 
-    const [{ data: per, error: perErr }, { data: envs, error: envsErr }, { data: accts, error: acctsErr }] = await Promise.all([
+    const [
+      { data: per, error: perErr }, { data: envs, error: envsErr }, { data: accts, error: acctsErr }, { data: caps },
+    ] = await Promise.all([
       supabase.from('budget_periods').select('*').eq('user_id', user.id).eq('period_date', periodDate).single(),
       supabase.from('envelopes').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
       supabase.from('bank_accounts').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
+      // Optional feature: an error here (e.g. capture not set up in the database) just means no inbox.
+      supabase.from('captured_notifications').select('*').eq('user_id', user.id).eq('status', 'pending')
+        .order('received_at', { ascending: false }).limit(50),
     ])
     setPeriod(per)
     setEnvelopes(envs ?? [])
     setBankAccounts(accts ?? [])
+    setCaptures(caps ?? [])
     let failed = Boolean((perErr && perErr.code !== NO_ROWS) || envsErr || acctsErr)
 
     if (per) {
@@ -255,6 +268,49 @@ function TransaccionesContent() {
         : `No se pudo eliminar «${description}». Intenta de nuevo.`)
     }
     loadData()
+  }
+
+  /** Marks a capture as handled so it leaves the inbox (the notification text stays stored). */
+  async function resolveCapture(capture: CapturedNotification, status: 'registered' | 'dismissed') {
+    const { error } = await createClient()
+      .from('captured_notifications')
+      .update({ status, resolved_at: new Date().toISOString() })
+      .eq('id', capture.id)
+    if (error) {
+      setNotice(status === 'dismissed'
+        ? 'No se pudo descartar la captura. Intenta de nuevo.'
+        : 'El movimiento se guardó, pero la captura sigue en «Por clasificar». Descártala para que no se repita.')
+      return
+    }
+    setCaptures(current => current.filter(c => c.id !== capture.id))
+  }
+
+  async function handleDismissCapture(capture: CapturedNotification) {
+    setNotice(null)
+    setCaptureBusyId(capture.id)
+    await resolveCapture(capture, 'dismissed')
+    setCaptureBusyId(null)
+  }
+
+  /** Runs after the add form saved a movement. */
+  async function handleAdded() {
+    if (registering) await resolveCapture(registering.capture, 'registered')
+    loadData()
+  }
+
+  // ?nuevo=1 (the "Nuevo gasto" shortcut of the installed app) opens the add form directly.
+  const wantsNew = searchParams.get('nuevo') === '1'
+
+  function handleAddOpenChange(open: boolean) {
+    setShowQuickAdd(open)
+    if (open) return
+    setRegistering(null)
+    if (wantsNew) {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('nuevo')
+      const query = params.toString()
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    }
   }
 
   const pendingCount = entries.filter(isPending).length
@@ -406,6 +462,16 @@ function TransaccionesContent() {
           <>
             {period.closed_at && <ClosedMonthAlert periodDate={periodDate} />}
 
+            <CaptureInbox
+              captures={captures}
+              bankAccounts={bankAccounts}
+              periodDate={periodDate}
+              busyId={captureBusyId}
+              locked={rowsLocked}
+              onRegister={(capture, initial) => setRegistering({ capture, initial })}
+              onDismiss={handleDismissCapture}
+            />
+
             {/* Summary: Balance first and full width on phones */}
             <section aria-label="Resumen del mes" className="space-y-2">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
@@ -553,9 +619,10 @@ function TransaccionesContent() {
           envelopes={envelopes}
           bankAccounts={bankAccounts}
           budgetPeriod={period}
-          onSuccess={loadData}
-          open={showQuickAdd}
-          onOpenChange={setShowQuickAdd}
+          onSuccess={handleAdded}
+          open={showQuickAdd || registering !== null || (wantsNew && canAdd)}
+          onOpenChange={handleAddOpenChange}
+          initial={registering?.initial}
         />
       )}
 

@@ -11,6 +11,7 @@ import Badge from '@/components/ui/Badge'
 import PageHeader from '@/components/ui/PageHeader'
 import { LoadingState } from '@/components/ui/Spinner'
 import InstallAppCard from '@/components/settings/InstallAppCard'
+import CaptureSetupCard from '@/components/settings/CaptureSetupCard'
 import { useSignOut } from '@/hooks/useSignOut'
 import { cn, focusRing } from '@/lib/utils'
 import type { Profile } from '@/types/database'
@@ -218,6 +219,8 @@ export default function ConfiguracionPage() {
               </Link>
             </div>
           </Card>
+
+          <CaptureSetupCard />
 
           <InstallAppCard />
 
