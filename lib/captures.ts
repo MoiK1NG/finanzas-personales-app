@@ -34,7 +34,11 @@ function normalize(text: string): string {
  * separator followed by one or two digits is the decimal part.
  */
 export function parseAmount(text: string): number | null {
+  // Some notices drop the "$" ("Recibiste 700.000,00 en tu cuenta"): then only a number written
+  // like money counts (thousands separators or two decimals), so dates, times, card digits and
+  // percentages ("4,5%") are not read as amounts.
   const match = /\$\s?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,](\d{1,2}))?(?!\d)/.exec(text)
+    ?? /(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+|\d+(?=[.,]\d{2}(?![\d.,])))(?:[.,](\d{2}))?(?![\d%]|[.,]\d)/.exec(text)
   if (!match) return null
   const whole = Number(match[1].replace(/[.,]/g, ''))
   const cents = match[2] ? Number(match[2].padEnd(2, '0')) / 100 : 0
