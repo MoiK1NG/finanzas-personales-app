@@ -34,7 +34,11 @@ function normalize(text: string): string {
  * separator followed by one or two digits is the decimal part.
  */
 export function parseAmount(text: string): number | null {
+  // Some notices drop the "$" ("Recibiste 700.000,00 en tu cuenta"): then only a number written
+  // like money counts (thousands separators or two decimals), so dates, times, card digits and
+  // percentages ("4,5%") are not read as amounts.
   const match = /\$\s?(\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,](\d{1,2}))?(?!\d)/.exec(text)
+    ?? /(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+|\d+(?=[.,]\d{2}(?![\d.,])))(?:[.,](\d{2}))?(?![\d%]|[.,]\d)/.exec(text)
   if (!match) return null
   const whole = Number(match[1].replace(/[.,]/g, ''))
   const cents = match[2] ? Number(match[2].padEnd(2, '0')) / 100 : 0
@@ -51,6 +55,27 @@ export function parseDirection(text: string): CaptureDirection | null {
   if (INCOMING.some(word => t.includes(word))) return 'in'
   if (OUTGOING.some(word => t.includes(word))) return 'out'
   return null
+}
+
+/**
+ * Banks use the same app for payment notices and for advertising. A capture "looks like a movement"
+ * when it states a completed action ("enviaste", "te enviaron", "transacción exitosa") or names a
+ * payment word ("compra", "pago") next to an amount. Promotions ("El dólar subió… convierte ahora",
+ * "¿Necesitas saldo ya?") usually have neither. This only decides what the inbox shows first:
+ * nothing is deleted, so a real payment classified as "other" is still one tap away.
+ */
+const COMPLETED_ACTIONS = [
+  'recibiste', 'te enviaron', 'te llego', 'te transfirieron', 'te pagaron', 'te consignaron',
+  'enviaste', 'pagaste', 'compraste', 'transferiste', 'retiraste', 'realizaste',
+  'transaccion exitosa', 'compra aprobada', 'pago exitoso',
+]
+const PAYMENT_WORDS = ['compra', 'pago', 'retiro', 'abono', 'transferencia', 'debito', 'cargo']
+
+export function isLikelyMovement(capture: CaptureText): boolean {
+  const text = [capture.title, capture.body].filter(Boolean).join('\n')
+  const t = normalize(text)
+  if (COMPLETED_ACTIONS.some(phrase => t.includes(phrase))) return true
+  return parseAmount(text) !== null && PAYMENT_WORDS.some(word => t.includes(word))
 }
 
 export function parseCapture(capture: CaptureText): ParsedCapture {

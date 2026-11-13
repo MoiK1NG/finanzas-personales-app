@@ -10,6 +10,8 @@ export interface CaptureRequestData {
   app: string
   title: string
   text: string
+  /** Sender-side event id (Message487 sends one and keeps it across retries). */
+  eventId: string | null
 }
 
 function pick(source: Record<string, unknown>, keys: string[]): string {
@@ -20,7 +22,8 @@ function pick(source: Record<string, unknown>, keys: string[]): string {
   return ''
 }
 
-const APP_KEYS = ['app', 'app_name', 'source', 'package']
+// source_name (Message487) is the app's display name; source is its package id, so it goes after.
+const APP_KEYS = ['app', 'app_name', 'source_name', 'source', 'package']
 const TITLE_KEYS = ['title', 'titulo']
 const TEXT_KEYS = ['text', 'body', 'message', 'texto', 'notification']
 
@@ -55,6 +58,7 @@ export async function readCaptureRequest(request: Request): Promise<CaptureReque
   }
 
   if (!token) token = pick(fields, ['token'])
+  const eventId = pick(fields, ['event_id']).trim() || null
 
   if (lines) {
     // Plain text: app on the first line, title on the second, the rest is the notification text.
@@ -62,7 +66,7 @@ export async function readCaptureRequest(request: Request): Promise<CaptureReque
     const rest = [...lines]
     const app = query.app || (rest.shift() ?? '')
     const title = query.title ?? (rest.shift() ?? '')
-    return { token: token.trim() || null, app: app.trim(), title: title.trim(), text: rest.join('\n').trim() }
+    return { token: token.trim() || null, app: app.trim(), title: title.trim(), text: rest.join('\n').trim(), eventId }
   }
 
   return {
@@ -70,5 +74,6 @@ export async function readCaptureRequest(request: Request): Promise<CaptureReque
     app: (query.app || pick(fields, APP_KEYS)).trim(),
     title: (query.title || pick(fields, TITLE_KEYS)).trim(),
     text: pick(fields, TEXT_KEYS).trim(),
+    eventId,
   }
 }
