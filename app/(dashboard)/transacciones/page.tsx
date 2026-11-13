@@ -292,6 +292,20 @@ function TransaccionesContent() {
     setCaptureBusyId(null)
   }
 
+  /** Dismisses every capture in the list at once (the "Otras notificaciones" group). */
+  async function handleDismissCaptures(list: CapturedNotification[]) {
+    setNotice(null)
+    setCaptureBusyId('many')
+    const ids = list.map(c => c.id)
+    const { error } = await createClient()
+      .from('captured_notifications')
+      .update({ status: 'dismissed', resolved_at: new Date().toISOString() })
+      .in('id', ids)
+    if (error) setNotice('No se pudieron descartar las notificaciones. Intenta de nuevo.')
+    else setCaptures(current => current.filter(c => !ids.includes(c.id)))
+    setCaptureBusyId(null)
+  }
+
   /** Runs after the add form saved a movement. */
   async function handleAdded() {
     if (registering) await resolveCapture(registering.capture, 'registered')
@@ -470,6 +484,7 @@ function TransaccionesContent() {
               locked={rowsLocked}
               onRegister={(capture, initial) => setRegistering({ capture, initial })}
               onDismiss={handleDismissCapture}
+              onDismissMany={handleDismissCaptures}
             />
 
             {/* Summary: Balance first and full width on phones */}

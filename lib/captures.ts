@@ -53,6 +53,27 @@ export function parseDirection(text: string): CaptureDirection | null {
   return null
 }
 
+/**
+ * Banks use the same app for payment notices and for advertising. A capture "looks like a movement"
+ * when it states a completed action ("enviaste", "te enviaron", "transacción exitosa") or names a
+ * payment word ("compra", "pago") next to an amount. Promotions ("El dólar subió… convierte ahora",
+ * "¿Necesitas saldo ya?") usually have neither. This only decides what the inbox shows first:
+ * nothing is deleted, so a real payment classified as "other" is still one tap away.
+ */
+const COMPLETED_ACTIONS = [
+  'recibiste', 'te enviaron', 'te llego', 'te transfirieron', 'te pagaron', 'te consignaron',
+  'enviaste', 'pagaste', 'compraste', 'transferiste', 'retiraste', 'realizaste',
+  'transaccion exitosa', 'compra aprobada', 'pago exitoso',
+]
+const PAYMENT_WORDS = ['compra', 'pago', 'retiro', 'abono', 'transferencia', 'debito', 'cargo']
+
+export function isLikelyMovement(capture: CaptureText): boolean {
+  const text = [capture.title, capture.body].filter(Boolean).join('\n')
+  const t = normalize(text)
+  if (COMPLETED_ACTIONS.some(phrase => t.includes(phrase))) return true
+  return parseAmount(text) !== null && PAYMENT_WORDS.some(word => t.includes(word))
+}
+
 export function parseCapture(capture: CaptureText): ParsedCapture {
   const text = [capture.title, capture.body].filter(Boolean).join('\n')
   const direction = parseDirection(text)

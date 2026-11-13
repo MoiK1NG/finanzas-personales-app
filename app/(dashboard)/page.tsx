@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { cn, focusRing, formatPeriodLabel, groupTransfers } from '@/lib/utils'
 import { ensureRecurringOccurrences } from '@/lib/recurring'
+import { isLikelyMovement } from '@/lib/captures'
 import { getReconciliation, setOpeningBalance } from '@/lib/monthClose'
 import { usePeriod } from '@/hooks/usePeriod'
 import Header from '@/components/layout/Header'
@@ -130,7 +131,7 @@ export default function DashboardPage() {
       { data: txs },
       { count: pending },
       { data: rec },
-      { count: captured },
+      { data: captured },
     ] = await Promise.all([
       supabase.from('envelopes').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
       supabase.from('v_envelope_summary').select('*').eq('budget_period_id', per.id).eq('user_id', user.id),
@@ -144,8 +145,9 @@ export default function DashboardPage() {
         .or('type.neq.transfer,transfer_direction.eq.out'),
       getReconciliation(supabase, per.id),
       // Optional feature: if capture is not set up in the database this just counts 0.
-      supabase.from('captured_notifications').select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id).eq('status', 'pending'),
+      // Only what looks like a payment counts; promotions wait in "Otras notificaciones".
+      supabase.from('captured_notifications').select('source_app, title, body')
+        .eq('user_id', user.id).eq('status', 'pending').limit(50),
     ])
     if (isStale()) return
 
@@ -159,7 +161,7 @@ export default function DashboardPage() {
     setPeriodSummary(perSum)
     setEntries(groupTransfers(txs ?? []).slice(0, 8))
     setPendingCount(pending ?? 0)
-    setCaptureCount(captured ?? 0)
+    setCaptureCount((captured ?? []).filter(c => isLikelyMovement(c)).length)
     setReconciliation(rec)
     setLoadedPeriod(periodDate)
     setLoading(false)

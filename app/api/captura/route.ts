@@ -11,6 +11,7 @@ import { readCaptureRequest } from '@/lib/captureRequest'
  *   Key:  header "x-capture-token: <clave>"  (or "Authorization: Bearer <clave>", or ?token=<clave>)
  *   Body: plain text, first line = app name, second line = title, the rest = text
  *         (JSON {app,title,text} and form fields app/title/text also work)
+ *   Message487 (F-Droid) works as is: Bearer key, JSON {source_name,title,text,event_id}.
  */
 /**
  * One log line per rejected request, so a phone that fails can be diagnosed from the Vercel logs.
@@ -58,5 +59,8 @@ export async function POST(request: Request) {
       { status: invalid ? 401 : empty ? 400 : 500 }
     )
   }
-  return Response.json({ ok: true, result: data })
+  // Message487 retries until it gets this exact acknowledgement for its event id. A repeated event
+  // ('duplicate') is acknowledged the same way so the phone stops retrying it.
+  const ack = fields.eventId ? { status: 'accepted', event_id: fields.eventId } : {}
+  return Response.json({ ok: true, result: data, ...ack })
 }
