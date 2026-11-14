@@ -1,12 +1,18 @@
 @import "tailwindcss";
 
+/* dark: utilities follow the theme picked in the header, not only the OS setting. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* ──────────────────────────────────────────────────────────────────────────
    Design tokens
-   Semantic colors swap automatically with the OS light/dark preference.
+   Semantic colors swap with the theme on <html data-theme="light|neutral|dark">,
+   set before the first paint by themeScript (lib/theme.ts). "Automático"
+   resolves to light or dark from the OS setting. Without the attribute the
+   light values apply.
    Use the Tailwind utilities generated in @theme below (bg-surface, text-fg,
    border-border, text-income…) instead of raw grays/whites.
-   Every text/background pair used by the app passes WCAG AA (4.5:1) in both
-   modes; fg-faint is for placeholders and decorative icons only (≥3:1).
+   Every text/background pair used by the app passes WCAG AA (4.5:1) in every
+   themes; fg-faint is for placeholders and decorative icons only (≥3:1).
    ────────────────────────────────────────────────────────────────────────── */
 :root {
   color-scheme: light;
@@ -62,53 +68,100 @@
   --sidebar-hover: #1f2937;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
+:root[data-theme="neutral"] {
+  /* Soft neutral grays: no bright white and no near-black, less glare.
+     Text colors are darker than in light mode because the surfaces are grayer. */
+  color-scheme: light;
 
-    --canvas: #0b0d12;
-    --surface: #151821;
-    --surface-2: #1b1f2a;
-    --muted: #242935;
-    --border: #262b37;
-    --border-strong: #363c4a;
+  --canvas: #d6d6d3;
+  --surface: #e4e4e1;
+  --surface-2: #dcdcd9;
+  --muted: #cfcfcb;
+  --border: #c4c4bf;
+  --border-strong: #a9a9a3;
 
-    --fg: #eceef3;
-    --fg-muted: #b0b6c3;
-    --fg-subtle: #8f97a6;
-    --fg-faint: #626a79;
+  --fg: #1a1a19;
+  --fg-muted: #3a3a37;
+  --fg-subtle: #494945;
+  --fg-faint: #74746e;
 
-    --primary: #5b5ff0;
-    --primary-hover: #6d71f4;
-    --primary-fg: #ffffff;
-    --primary-soft: rgb(99 102 241 / 0.16);
-    --accent: #a5b4fc;
-    --ring: #818cf8;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-fg: #ffffff;
+  --primary-soft: #d6d6ee;
+  --accent: #3730a3;
+  --ring: #4f46e5;
 
-    --income: #4ade80;
-    --income-soft: rgb(34 197 94 / 0.14);
-    --income-solid: #22c55e;
-    --expense: #f87171;
-    --expense-soft: rgb(239 68 68 / 0.14);
-    --expense-solid: #ef4444;
-    --warning: #facc15;
-    --warning-soft: rgb(234 179 8 / 0.14);
-    --warning-solid: #eab308;
-    --info: #60a5fa;
-    --info-soft: rgb(59 130 246 / 0.14);
+  --income: #166534;
+  --income-soft: #cfe3d4;
+  --income-solid: #22c55e;
+  --expense: #a51b1b;
+  --expense-soft: #ebd3d1;
+  --expense-solid: #ef4444;
+  --warning: #713f12;
+  --warning-soft: #e6dcb5;
+  --warning-solid: #eab308;
+  --info: #1e3a8a;
+  --info-soft: #cdd6ea;
 
-    --danger: #dc2626;
-    --danger-hover: #ef4444;
-    --danger-fg: #ffffff;
+  --danger: #b91c1c;
+  --danger-hover: #991b1b;
+  --danger-fg: #ffffff;
 
-    --overlay: rgb(0 0 0 / 0.6);
+  --overlay: rgb(26 26 25 / 0.5);
 
-    --sidebar: #0f1117;
-    --sidebar-border: #1f2330;
-    --sidebar-fg: #ffffff;
-    --sidebar-fg-muted: #9aa1ae;
-    --sidebar-hover: #1a1e29;
-  }
+  --sidebar: #2b2b29;
+  --sidebar-border: #3a3a37;
+  --sidebar-fg: #ffffff;
+  --sidebar-fg-muted: #b4b4ae;
+  --sidebar-hover: #3a3a37;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #0b0d12;
+  --surface: #151821;
+  --surface-2: #1b1f2a;
+  --muted: #242935;
+  --border: #262b37;
+  --border-strong: #363c4a;
+
+  --fg: #eceef3;
+  --fg-muted: #b0b6c3;
+  --fg-subtle: #8f97a6;
+  --fg-faint: #626a79;
+
+  --primary: #5b5ff0;
+  --primary-hover: #6d71f4;
+  --primary-fg: #ffffff;
+  --primary-soft: rgb(99 102 241 / 0.16);
+  --accent: #a5b4fc;
+  --ring: #818cf8;
+
+  --income: #4ade80;
+  --income-soft: rgb(34 197 94 / 0.14);
+  --income-solid: #22c55e;
+  --expense: #f87171;
+  --expense-soft: rgb(239 68 68 / 0.14);
+  --expense-solid: #ef4444;
+  --warning: #facc15;
+  --warning-soft: rgb(234 179 8 / 0.14);
+  --warning-solid: #eab308;
+  --info: #60a5fa;
+  --info-soft: rgb(59 130 246 / 0.14);
+
+  --danger: #dc2626;
+  --danger-hover: #ef4444;
+  --danger-fg: #ffffff;
+
+  --overlay: rgb(0 0 0 / 0.6);
+
+  --sidebar: #0f1117;
+  --sidebar-border: #1f2330;
+  --sidebar-fg: #ffffff;
+  --sidebar-fg-muted: #9aa1ae;
+  --sidebar-hover: #1a1e29;
 }
 
 @theme inline {
