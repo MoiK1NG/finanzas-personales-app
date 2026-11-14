@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
+import { themeScript } from '@/lib/theme'
 import './globals.css'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -15,18 +16,20 @@ export const metadata: Metadata = {
   },
 }
 
+// The browser bar color (theme-color) is set by themeScript, because it depends on the theme
+// the user picked, not only on the OS setting.
 export const viewport: Viewport = {
   colorScheme: 'light dark',
   viewportFit: 'cover',
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
-    { media: '(prefers-color-scheme: dark)', color: '#151821' },
-  ],
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" className="h-full">
+    // data-theme is set by themeScript before hydration, so the server markup cannot match it.
+    <html lang="es" className="h-full" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className={`${inter.className} h-full bg-canvas text-fg antialiased`}>
         {children}
       </body>

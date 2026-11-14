@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Settings, TrendingUp } from 'lucide-react'
 import { cn, focusRing, formatPeriodLabel, getPeriodDate } from '@/lib/utils'
 import { addMonths, subMonths, format } from 'date-fns'
 import IconButton from '@/components/ui/IconButton'
+import ThemeMenu from '@/components/layout/ThemeMenu'
 
 interface HeaderProps {
   /** Month shown by the period navigator. Omit on screens that are not month-based. */
@@ -62,7 +63,9 @@ export default function Header({ periodDate, onPeriodChange, userName }: HeaderP
         </Link>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1 sm:gap-2">
+        <ThemeMenu />
+
         {/* User avatar */}
         {userName && (
           <div className="hidden sm:flex items-center gap-2">
